@@ -9,6 +9,7 @@
 #include <boost/numeric/ublas/matrix_proxy.hpp>
 #include <boost/numeric/ublas/triangular.hpp>
 #include <boost/numeric/ublas/io.hpp>
+#include <boost/numeric/ublas/lu.hpp>
 
 namespace ublas = boost::numeric::ublas;
 
@@ -19,7 +20,7 @@ using ublas::unbounded_array;
 using ublas::matrix_range;
 typedef ublas::vector<double> v;
 typedef ublas::vector_range<ublas::vector<double> > vr;
-typedef permutation_matrix<std::size_t> pmatrix;
+typedef ublas::permutation_matrix<std::size_t> pmatrix;
 
 class problem {
   public:
@@ -29,7 +30,9 @@ class problem {
   double sigma;
   double C;
 
-  problem(int _k, double _sigma, double _C) : k(_k), sigma(_sigma), C(_C) {/* Empty */}
+  problem(int _k, double _sigma, double _C) : k(_k), sigma(_sigma), C(_C)
+    {/* Empty */}
+
   void init_matrix(t_matrix & m, pmatrix & pm, int l) {
     int ih = (1 << (l+1));
     size_t N = (1 << (l+1)) + 1;
@@ -37,41 +40,47 @@ class problem {
     int ih2 = ih * ih;
 
     m.resize(N, N, 1, 1);
-    for(int i = 0; i < m.size1(); ++i) {
-      if(i != 0)
-        m(i, i-1) = -ih2;
+    m(0,0) = 1;
+    for(int i = 1; i < m.size1()-1; ++i) {
+      m(i, i-1) = -ih2;
       m(i,i) = 2*ih2 + sigma;
-      if(i+1 != m.size1())
-        m(i, i+1) = -ih2;
+      m(i, i+1) = -ih2;
     }
+    m(m.size1()-1, m.size1()-1) = 1;
 
     if(l == 0) {
-      lu_factorize(m, pm);
+      ublas::lu_factorize(m, pm);
     }
   }
 
-  void restrict(v& r, v& rp) {
-    for(int i = 0; i < rp.size(); ++i) {
-      rp[i] = (r[2*i] + 2*r[2*i+1] + r[2*i+2])/4.0;
+  void restrict(vr& r, vr& rp) {
+    for(int i = 1; i < rp.size()-1; ++i) {
+      rp[i] = (r[2*i-1] + 2*r[2*i] + r[2*i+1])/4.0;
     }
   }
 
-  void prolongate(v& ep, v& e) {
-    e[0] = ep[0]/2.0;
-
-    for(int i = 1; i < e.size()-1; i += 2) {
-      e[i] = ep[(i-1)/2];
-    }
+  void prolongate(vr& ep, vr& e) {
+    e[1] = ep[1]/2.0;
 
     for(int i = 2; i < e.size()-1; i += 2) {
-      e[i] = (ep[(i-2)/2] + ep[i/2])/2.0;
+      e[i] = ep[i/2];
     }
 
-    e[e.size()-1] = ep[ep.size()-1]/2.0;
+    for(int i = 3; i < e.size()-1; i += 2) {
+      e[i] = (ep[(i-1)/2] + ep[(i+1)/2])/2.0;
+    }
   }
   
   double u(double x) {
     return (C*sin(k*M_PI*x))/(M_PI*M_PI*k*k + sigma);
+  }
+
+  void u(v & ur, int l) {
+    int N = (1 << (l+1)) + 1;
+    double h = 1/(static_cast<double>(N-1));
+    for(int i = 0; i < N; ++i) {
+      ur[i] = u(i * h);
+    }
   }
 
   double du(double x) {
@@ -100,11 +109,12 @@ void jacobi(const M& A, V& u, const V& f) {
   const double omega = 2.0/3.0;
   v w(u);
 
+  std::cout << "A: " << A << std::endl;
   std::cout << "u: " << u << std::endl;
 
   for(int i = 0; i < nu; ++i) {
     w = prod(A, u);
-    w += f;
+    w -= f;
     for(int i = 0; i < A.size1(); ++i) {
       w[i] *= omega/A(i,i);
     }
@@ -113,7 +123,9 @@ void jacobi(const M& A, V& u, const V& f) {
   }
 }
 
-template<class prob>
+template<class prob,
+	 void presmooth(const typename prob::t_matrix& M, vr& u, const vr& f),
+	 void postsmooth(const typename prob::t_matrix& M, vr& u, const vr& f)>
 class multigrid {
   public:
     prob & p;
@@ -132,13 +144,12 @@ class multigrid {
     t_matrix *A;
     pmatrix pm;
 
-    multigrid(int _maxl, prob & _p) : maxl(_maxl), p(_p) {
+    multigrid(int _maxl, prob & _p) : maxl(_maxl), p(_p), pm(3) {
       N = (1 << (maxl + 2)) + maxl - 1;
 
       raw_uh.resize(N);// = static_cast<double *>(malloc(sizeof(double)*N));
       raw_rh.resize(N);// = static_cast<double *>(malloc(sizeof(double)*N));
       raw_fh.resize(N);// = static_cast<double *>(malloc(sizeof(double)*N));
-      pm.resize(3);
 
       raw_uh.clear();
       raw_rh.clear();
@@ -158,7 +169,7 @@ class multigrid {
 	::new(fh + i) vr(raw_fh, r);
 
 	::new(A + i) t_matrix();
-	p.init_matrix(A[i], maxl);
+	p.init_matrix(A[i], pm, i);
       }
 
       p.f(*(fh + maxl), maxl);
@@ -167,20 +178,19 @@ class multigrid {
     ~multigrid() {
       for(size_t i = 0; i <= maxl; ++i) {
 	(uh + i)->~vr();
+	(rh + i)->~vr();
 	(fh + i)->~vr();
 
 	(A + i)->~t_matrix();
       }
 
       free(uh);
+      free(rh);
       free(fh);
       free(A);
     }
 
-    template<void presmooth(const t_matrix& M, v& u, const v& f),
-             void postsmooth(const t_matrix& M, v& u, const v& f)>
     void solve() {
-      int l = maxl;
       for(int l = maxl; l > 0; --l) {
         // Smooth error
         presmooth(A[l], uh[l], fh[l]);
@@ -190,13 +200,24 @@ class multigrid {
 	rh[l] *= -1;
         rh[l] += fh[l];
 
-	p.restrict(rh[l], rh[l-1]);
+	p.restrict(rh[l], fh[l-1]);
       }
 
-      uh[0] = fh[0];
-      lu_substitute(m, pm, uh[0]);
+      std::cout << fh[0] << std::endl;
+      std::cout << A[0] << std::endl;
+      std::cout << pm << std::endl;
 
-      for(l = 1; l <= maxl; ++l) {
+      uh[0] = fh[0];
+      lu_substitute(A[0], pm, uh[0]);
+
+      std::cout << uh[0] << std::endl;
+
+
+
+      for(int l = 1; l <= maxl; ++l) {
+        p.prolongate(uh[l-1], rh[l]);
+
+	uh[l] += rh[l];
 
         postsmooth(A[l], uh[l], fh[l]);
       }
@@ -204,8 +225,13 @@ class multigrid {
 };
 
 int main(int argc, char * argv[]) {
-  problem p(1, 1.0, 1.0);
-  multigrid<problem> g(3, p);
+  problem p(1, 0.0, 1.0);
+  multigrid<problem, 
+            jacobi<1, problem::t_matrix, vr>,
+	    jacobi<1, problem::t_matrix, vr> > g(3, p);
+
+  v ur((1 << 4) + 1);
+  p.u(ur, 3);
 
   std::cout << "Max Level:             " << g.maxl << "\n"
             << "Allocated Vector Size: " << g.N << "\n"
@@ -220,8 +246,14 @@ int main(int argc, char * argv[]) {
     std::cout << "(" << i << ", " << g.A[i] << ")\n";
   }
 
-  std::cout << "Jacobi test:" << "\n";
+  /*std::cout << "Jacobi test:" << "\n";
   std::cout << g.uh[3] << "\n";
   jacobi<2, problem::t_matrix, vr>(g.A[3], g.uh[3], g.fh[3]);
-  std::cout << g.uh[3] << "\n";
+  std::cout << g.uh[3] << "\n";*/
+  for(int i = 0; i < 20; ++i) {
+    g.solve();
+    std::cout << g.uh[3] << "\n";
+  }
+
+  std::cout << "Calculated u: " << ur << std::endl;
 }
