@@ -128,6 +128,22 @@ void jacobi(const M& A, V& u, const V& f) {
   }
 }
 
+template<int nu, class M, class V>
+void gauss_seidel(const M& A, V& u, const V& f);
+
+template<>
+void gauss_seidel(
+  const ublas::banded_matrix<double, column_major, unbounded_array<double> >& A,
+  vr& u, const vr& f) {
+  v w(u.size());
+
+  assert(A.size1() == A.size2());
+  assert(u.size() == A.size1());
+  assert(f.size() == A.size1());
+
+  for(int i = 0; 
+}
+
 template<class V>
 double norm_h(double h, V& u) {
   return sqrt(h*inner_prod(u,u));
@@ -291,6 +307,7 @@ void test_multigrid(problem & p, int level) {
   experiment exp(level);
   std::vector<experiment_iteration> & eis = exp.iterations;
 
+  ur.clear();
   p.u(ur, level);
 
   const double h = 1/(static_cast<double>(N));
@@ -305,7 +322,7 @@ void test_multigrid(problem & p, int level) {
 
     // Calculate the error on the finest grid.
     e = ur - g.uh[level];
-
+    
     // Record statistics.
     experiment_iteration ei;
 
