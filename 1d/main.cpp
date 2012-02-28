@@ -40,6 +40,7 @@ class problem {
     int ih2 = ih * ih;
 
     m.resize(N, N, 1, 1);
+    m.clear();
     m(0,0) = 1;
     for(int i = 1; i < m.size1()-1; ++i) {
       m(i, i-1) = -ih2;
@@ -47,28 +48,28 @@ class problem {
       m(i, i+1) = -ih2;
     }
     m(m.size1()-1, m.size1()-1) = 1;
-
-    if(l == 0) {
-      ublas::lu_factorize(m, pm);
-    }
   }
 
-  void restrict(vr& r, vr& rp) {
+  template<class V>
+  void restrict(V& r, V& rp) {
     for(int i = 1; i < rp.size()-1; ++i) {
       rp[i] = (r[2*i-1] + 2*r[2*i] + r[2*i+1])/4.0;
     }
   }
 
-  void prolongate(vr& ep, vr& e) {
+  template<class V>
+  void prolongate(V& ep, V& e) {
     e[1] = ep[1]/2.0;
 
-    for(int i = 2; i < e.size()-1; i += 2) {
+    for(int i = 2; i < e.size()-2; i += 2) {
       e[i] = ep[i/2];
     }
 
-    for(int i = 3; i < e.size()-1; i += 2) {
+    for(int i = 3; i < e.size()-2; i += 2) {
       e[i] = (ep[(i-1)/2] + ep[(i+1)/2])/2.0;
     }
+
+    e[e.size()-2] = ep[ep.size()-2]/2.0;
   }
   
   double u(double x) {
@@ -76,9 +77,9 @@ class problem {
   }
 
   void u(v & ur, int l) {
-    int N = (1 << (l+1)) + 1;
-    double h = 1/(static_cast<double>(N-1));
-    for(int i = 0; i < N; ++i) {
+    int N = (1 << (l+1));
+    double h = 1/(static_cast<double>(N));
+    for(int i = 1; i <= N; ++i) {
       ur[i] = u(i * h);
     }
   }
@@ -96,9 +97,9 @@ class problem {
   }
 
   void f(vr & fh, int l) {
-    int N = (1 << (l+1)) + 1;
-    double h = 1/(static_cast<double>(N-1));
-    for(int i = 0; i < N; ++i) {
+    int N = (1 << (l+1));
+    double h = 1/(static_cast<double>(N));
+    for(int i = 1; i <= N; ++i) {
       fh[i] = f(i * h);
     }
   }
@@ -109,8 +110,9 @@ void jacobi(const M& A, V& u, const V& f) {
   const double omega = 2.0/3.0;
   v w(u);
 
-  std::cout << "A: " << A << std::endl;
-  std::cout << "u: " << u << std::endl;
+  assert(A.size1() == A.size2());
+  assert(u.size() == A.size1());
+  assert(f.size() == A.size1());
 
   for(int i = 0; i < nu; ++i) {
     w = prod(A, u);
@@ -119,8 +121,12 @@ void jacobi(const M& A, V& u, const V& f) {
       w[i] *= omega/A(i,i);
     }
     u -= w;
-    std::cout << "u: " << u << std::endl;
   }
+}
+
+template<class V>
+double norm_h(double h, V& u) {
+  return sqrt(h*inner_prod(u,u));
 }
 
 template<class prob,
@@ -172,7 +178,7 @@ class multigrid {
 	p.init_matrix(A[i], pm, i);
       }
 
-      p.f(*(fh + maxl), maxl);
+      p.f(fh[maxl], maxl);
     }
 
     ~multigrid() {
@@ -199,61 +205,101 @@ class multigrid {
 	rh[l] = prod(A[l], uh[l]);
 	rh[l] *= -1;
         rh[l] += fh[l];
+	
+	//std::cout << fh[l] << std::endl;
 
+        // Restrict residual to grid below.
 	p.restrict(rh[l], fh[l-1]);
       }
 
-      std::cout << fh[0] << std::endl;
-      std::cout << A[0] << std::endl;
-      std::cout << pm << std::endl;
-
-      uh[0] = fh[0];
-      lu_substitute(A[0], pm, uh[0]);
-
-      std::cout << uh[0] << std::endl;
-
-
+      // Invert A on coarsest grid.
+      if(maxl >= 8) {
+        std::cout << fh[0] << std::endl;
+      }
+      uh[0](1) = fh[0](1)/A[0](1,1);
+      if(maxl >= 8) {
+        std::cout << uh[0] << std::endl;
+      }
 
       for(int l = 1; l <= maxl; ++l) {
+        // Prolongate error to grid above.
         p.prolongate(uh[l-1], rh[l]);
+        //std::cout << rh[l] << std::endl;
 
+        // Coarse grid correction.
 	uh[l] += rh[l];
 
+        // Smooth again.
         postsmooth(A[l], uh[l], fh[l]);
       }
     }
 };
 
-int main(int argc, char * argv[]) {
-  problem p(1, 0.0, 1.0);
+void test_multigrid(problem & p, int level) {
+  int N = (1 << (level + 1));
   multigrid<problem, 
-            jacobi<1, problem::t_matrix, vr>,
-	    jacobi<1, problem::t_matrix, vr> > g(3, p);
+            jacobi<2, problem::t_matrix, vr>,
+	    jacobi<2, problem::t_matrix, vr> > g(level, p);
+  v ur(N + 1);
+  v e;
 
-  v ur((1 << 4) + 1);
-  p.u(ur, 3);
-
-  std::cout << "Max Level:             " << g.maxl << "\n"
-            << "Allocated Vector Size: " << g.N << "\n"
-	    << "Level Vectors:\n";
-
-  for(int i = 0; i <= g.maxl; ++i) {
-    std::cout << "(" << i << ", " << g.uh[i] << ", " << g.fh[i] << ")\n";
-  }
+  p.u(ur, level);
 
   std::cout << "Level Matrices:\n";
-  for(int i = 0; i <= g.maxl; ++i) {
-    std::cout << "(" << i << ", " << g.A[i] << ")\n";
+  for(int i = 0; i < level; ++i) {
+    std::cout << g.A[i] << std::endl;
   }
 
-  /*std::cout << "Jacobi test:" << "\n";
-  std::cout << g.uh[3] << "\n";
-  jacobi<2, problem::t_matrix, vr>(g.A[3], g.uh[3], g.fh[3]);
-  std::cout << g.uh[3] << "\n";*/
-  for(int i = 0; i < 20; ++i) {
+  std::cout << "Multigrid solution on level " << level << ":\n";
+  const double h = 1/(static_cast<double>(N));
+  for(int i = 0; i < level; ++i) {
     g.solve();
-    std::cout << g.uh[3] << "\n";
+    e = ur - g.uh[level];
+    std::cout << "||e||_h = " << norm_h<v>(h, e) << std::endl;
+    std::cout << "||e||_{\\infty} = " << norm_inf(e) << std::endl;
   }
 
-  std::cout << "Calculated u: " << ur << std::endl;
+  //std::cout << g.uh[level] << std::endl;
+}
+
+void test_restrict(problem & p) {
+  v w(5);
+  v wp(9);
+
+  w[0] = 0;
+  w[1] = 1;
+  w[2] = 1;
+  w[3] = 1;
+  w[4] = 0;
+
+  p.prolongate<v>(w, wp);
+  p.restrict<v>(wp, w);
+
+  std::cout << w << std::endl;
+
+  wp[0] = 0;
+  wp[1] = 1;
+  wp[2] = 1;
+  wp[3] = 1;
+  wp[4] = 1;
+  wp[5] = 1;
+  wp[6] = 1;
+  wp[7] = 1;
+  wp[8] = 0;
+
+  p.restrict<v>(wp, w);
+  p.prolongate<v>(w, wp);
+
+  std::cout << wp << std::endl;
+}
+
+int main(int argc, char * argv[]) {
+  const int maxl = 10;
+  problem p(1, 0.0, 1.0);
+  
+  //test_restrict(p);
+
+  for(int i = 3; i <= maxl; ++i) {
+    test_multigrid(p, i);
+  }
 }
