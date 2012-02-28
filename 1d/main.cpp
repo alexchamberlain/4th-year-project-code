@@ -1,6 +1,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <iostream>
+#include <iomanip>
 #include <vector>
 
 #include <boost/numeric/ublas/vector.hpp>
@@ -43,9 +44,11 @@ class problem {
     m.clear();
     m(0,0) = 1;
     for(int i = 1; i < m.size1()-1; ++i) {
-      m(i, i-1) = -ih2;
+      if(i != 1)
+	m(i, i-1) = -ih2;
       m(i,i) = 2*ih2 + sigma;
-      m(i, i+1) = -ih2;
+      if(i != m.size1()-2)
+	m(i, i+1) = -ih2;
     }
     m(m.size1()-1, m.size1()-1) = 1;
   }
@@ -79,7 +82,7 @@ class problem {
   void u(v & ur, int l) {
     int N = (1 << (l+1));
     double h = 1/(static_cast<double>(N));
-    for(int i = 1; i <= N; ++i) {
+    for(int i = 1; i < N; ++i) {
       ur[i] = u(i * h);
     }
   }
@@ -99,7 +102,7 @@ class problem {
   void f(vr & fh, int l) {
     int N = (1 << (l+1));
     double h = 1/(static_cast<double>(N));
-    for(int i = 1; i <= N; ++i) {
+    for(int i = 1; i < N; ++i) {
       fh[i] = f(i * h);
     }
   }
@@ -117,8 +120,9 @@ void jacobi(const M& A, V& u, const V& f) {
   for(int i = 0; i < nu; ++i) {
     w = prod(A, u);
     w -= f;
-    for(int i = 0; i < A.size1(); ++i) {
-      w[i] *= omega/A(i,i);
+    for(int i = 1; i < A.size1()-1; ++i) {
+      w[i] *= omega;
+      w[i] /= A(i,i);
     }
     u -= w;
   }
@@ -205,21 +209,18 @@ class multigrid {
 	rh[l] = prod(A[l], uh[l]);
 	rh[l] *= -1;
         rh[l] += fh[l];
-	
-	//std::cout << fh[l] << std::endl;
 
+        // Clear the vector on the lower level.
+	for(int i = 0; i < uh[l-1].size(); ++i) {
+          uh[l-1][i] = 0.0;
+	}
+	
         // Restrict residual to grid below.
 	p.restrict(rh[l], fh[l-1]);
       }
 
       // Invert A on coarsest grid.
-      if(maxl >= 8) {
-        std::cout << fh[0] << std::endl;
-      }
       uh[0](1) = fh[0](1)/A[0](1,1);
-      if(maxl >= 8) {
-        std::cout << uh[0] << std::endl;
-      }
 
       for(int l = 1; l <= maxl; ++l) {
         // Prolongate error to grid above.
@@ -235,70 +236,110 @@ class multigrid {
     }
 };
 
+class experiment_iteration {
+  public:
+    int i;
+    double l2r;
+    double l2rf;
+    double infr;
+    double infrf;
+    double l2e;
+    double l2ef;
+    double infe;
+    double infef;
+};
+
+class experiment {
+  public:
+    int maxl;
+    std::vector<experiment_iteration> iterations;
+
+    experiment(int _maxl) : maxl(_maxl) {
+      iterations.reserve(maxl);
+    }
+};
+
+std::ostream & operator << (std::ostream & out, const experiment & e) {
+  out << "Multigrid solution on level " << e.maxl << "\n";
+  out << "  i          ||r||_h       ||r||_inf          ||e||_h        ||e||_inf\n";
+  for(std::vector<experiment_iteration>::const_iterator i = e.iterations.begin();
+      i != e.iterations.end(); ++i) {
+    out << " "  << std::setw(2) << i->i;
+    out << " "  << std::right << std::scientific << std::setw(7) << std::setprecision(3) << i->l2r
+        << " (" << std::right << std::fixed      << std::setw(4) << std::setprecision(2) << i->l2rf << ")";
+    out << " "  << std::right << std::scientific << std::setw(7) << std::setprecision(3) << i->infr
+        << " (" << std::right << std::fixed      << std::setw(4) << std::setprecision(2) << i->infrf << ")";
+    out << " "  << std::right << std::scientific << std::setw(7) << std::setprecision(3) << i->l2e
+        << " (" << std::right << std::fixed      << std::setw(4) << std::setprecision(2) << i->l2ef << ")";
+    out << " "  << std::right << std::scientific << std::setw(7) << std::setprecision(3) << i->infe
+        << " (" << std::right << std::fixed      << std::setw(4) << std::setprecision(2) << i->infef << ")";
+    out << std::endl;
+  }
+
+  return out;
+}
+
 void test_multigrid(problem & p, int level) {
   int N = (1 << (level + 1));
   multigrid<problem, 
             jacobi<2, problem::t_matrix, vr>,
 	    jacobi<2, problem::t_matrix, vr> > g(level, p);
   v ur(N + 1);
+  v r(N + 1);
   v e;
+
+  experiment exp(level);
+  std::vector<experiment_iteration> & eis = exp.iterations;
 
   p.u(ur, level);
 
-  std::cout << "Level Matrices:\n";
-  for(int i = 0; i < level; ++i) {
-    std::cout << g.A[i] << std::endl;
-  }
-
-  std::cout << "Multigrid solution on level " << level << ":\n";
   const double h = 1/(static_cast<double>(N));
-  for(int i = 0; i < level; ++i) {
+  int i = 0;
+  while(1) {
     g.solve();
+
+    // Calculate the residual at the finest grid.
+    r = prod(g.A[level], g.uh[level]);
+    r *= -1;
+    r += g.fh[level];
+
+    // Calculate the error on the finest grid.
     e = ur - g.uh[level];
-    std::cout << "||e||_h = " << norm_h<v>(h, e) << std::endl;
-    std::cout << "||e||_{\\infty} = " << norm_inf(e) << std::endl;
+
+    // Record statistics.
+    experiment_iteration ei;
+
+    ei.i = i+1;
+
+    ei.l2r  = norm_h<v>(h,r);
+    ei.infr = norm_inf(r);
+
+    ei.l2e  = norm_h<v>(h,e);
+    ei.infe = norm_inf(e);
+
+    if(i > 0) {
+      ei.l2rf  = ei.l2r/eis[i-1].l2r;
+      ei.infrf = ei.infr/eis[i-1].infr;
+
+      ei.l2ef  = ei.l2e/eis[i-1].l2e;
+      ei.infef = ei.infe/eis[i-1].infe;
+    }
+
+    exp.iterations.push_back(ei);
+
+    if(i > 0 && ei.l2rf > 0.5)
+      break;
+
+    ++i;
   }
 
-  //std::cout << g.uh[level] << std::endl;
-}
-
-void test_restrict(problem & p) {
-  v w(5);
-  v wp(9);
-
-  w[0] = 0;
-  w[1] = 1;
-  w[2] = 1;
-  w[3] = 1;
-  w[4] = 0;
-
-  p.prolongate<v>(w, wp);
-  p.restrict<v>(wp, w);
-
-  std::cout << w << std::endl;
-
-  wp[0] = 0;
-  wp[1] = 1;
-  wp[2] = 1;
-  wp[3] = 1;
-  wp[4] = 1;
-  wp[5] = 1;
-  wp[6] = 1;
-  wp[7] = 1;
-  wp[8] = 0;
-
-  p.restrict<v>(wp, w);
-  p.prolongate<v>(w, wp);
-
-  std::cout << wp << std::endl;
+  std::cout << exp << std::endl;
 }
 
 int main(int argc, char * argv[]) {
-  const int maxl = 10;
+  const int maxl = 9;
   problem p(1, 0.0, 1.0);
   
-  //test_restrict(p);
-
   for(int i = 3; i <= maxl; ++i) {
     test_multigrid(p, i);
   }
