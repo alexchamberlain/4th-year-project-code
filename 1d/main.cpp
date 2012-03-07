@@ -108,7 +108,12 @@ class problem {
   }
 };
 
-template<int nu, class M, class V>
+template<class V>
+double norm_h(double h, V& u) {
+  return sqrt(h*inner_prod(u,u));
+}
+
+template<class M, class V>
 void jacobi(const M& A, V& u, const V& f) {
   const double omega = 2.0/3.0;
   v w(u);
@@ -117,22 +122,20 @@ void jacobi(const M& A, V& u, const V& f) {
   assert(u.size() == A.size1());
   assert(f.size() == A.size1());
 
-  for(int i = 0; i < nu; ++i) {
-    w = prod(A, u);
-    w -= f;
-    for(int i = 1; i < A.size1()-1; ++i) {
-      w[i] *= omega;
-      w[i] /= A(i,i);
-    }
-    u -= w;
+  w = prod(A, u);
+  w -= f;
+  for(int i = 1; i < A.size1()-1; ++i) {
+    w[i] *= omega;
+    w[i] /= A(i,i);
   }
+  u -= w;
 }
 
-template<int nu, class M, class V>
+template<class M, class V>
 void gauss_seidel(const M& A, V& u, const V& f);
 
 template<>
-void gauss_seidel(
+void gauss_seidel<ublas::banded_matrix<double, column_major, unbounded_array<double> >, vr> (
   const ublas::banded_matrix<double, column_major, unbounded_array<double> >& A,
   vr& u, const vr& f) {
   v w(u.size());
@@ -140,17 +143,33 @@ void gauss_seidel(
   assert(A.size1() == A.size2());
   assert(u.size() == A.size1());
   assert(f.size() == A.size1());
+  
+  w = prod(A,u);
+  w -= f;
 
-  for(int i = 0; 
-}
+  double r1 = norm_h<v>(1/(static_cast<double>(u.size()-1)), w);
 
-template<class V>
-double norm_h(double h, V& u) {
-  return sqrt(h*inner_prod(u,u));
+  for(int i = 0; i < u.size(); ++i) {
+    w[i] = 0;
+    for(int j = i+1; (j < f.size()) && (j <= i + A.upper()); ++j)
+      w[i] -= A(i,j)*u[j];
+  }
+
+  w += f;
+
+  for(int i = 0; i < u.size(); ++i) {
+    u[i] = w[i];
+    for(int j = 0; j < i; ++j) {
+      u[i] -= A(i,j)*u[j];
+    }
+    u[i] /= A(i,i);
+  }
 }
 
 template<class prob,
+         int nu_1,
 	 void presmooth(const typename prob::t_matrix& M, vr& u, const vr& f),
+	 int nu_2,
 	 void postsmooth(const typename prob::t_matrix& M, vr& u, const vr& f)>
 class multigrid {
   public:
@@ -219,7 +238,8 @@ class multigrid {
     void solve() {
       for(int l = maxl; l > 0; --l) {
         // Smooth error
-        presmooth(A[l], uh[l], fh[l]);
+	for(int i = 0; i < nu_1; ++i)
+	  presmooth(A[l], uh[l], fh[l]);
 	
 	// Compute residual
 	rh[l] = prod(A[l], uh[l]);
@@ -247,7 +267,53 @@ class multigrid {
 	uh[l] += rh[l];
 
         // Smooth again.
-        postsmooth(A[l], uh[l], fh[l]);
+	for(int i = 0; i < nu_2; ++i)
+	  postsmooth(A[l], uh[l], fh[l]);
+      }
+    }
+
+    void full_solve() {
+      for(int tl = 0; tl <= maxl; ++tl) {
+	p.f(fh[tl], tl);
+	for(int l = tl; l > 0; --l) {
+	  // Smooth error
+	  for(int i = 0; i < nu_1; ++i)
+	    presmooth(A[l], uh[l], fh[l]);
+	  
+	  // Compute residual
+	  rh[l] = prod(A[l], uh[l]);
+	  rh[l] *= -1;
+	  rh[l] += fh[l];
+
+	  // Clear the vector on the lower level.
+	  for(int i = 0; i < uh[l-1].size(); ++i) {
+	    uh[l-1][i] = 0.0;
+	  }
+	  
+	  // Restrict residual to grid below.
+	  p.restrict(rh[l], fh[l-1]);
+	}
+
+	// Invert A on coarsest grid.
+	uh[0](1) = fh[0](1)/A[0](1,1);
+
+	for(int l = 1; l <= tl; ++l) {
+	  // Prolongate error to grid above.
+	  p.prolongate(uh[l-1], rh[l]);
+	  //std::cout << rh[l] << std::endl;
+
+	  // Coarse grid correction.
+	  uh[l] += rh[l];
+
+	  // Smooth again.
+	  for(int i = 0; i < nu_2; ++i)
+	    postsmooth(A[l], uh[l], fh[l]);
+	}
+
+        if(tl < maxl) {
+	  // Prolongate soln to grid above.
+	  p.prolongate(uh[tl], uh[tl+1]);
+	}
       }
     }
 };
@@ -295,11 +361,11 @@ std::ostream & operator << (std::ostream & out, const experiment & e) {
   return out;
 }
 
+template<int nu_1, int nu_2, 
+         void smooth(const typename problem::t_matrix& M, vr& u, const vr & f)>
 void test_multigrid(problem & p, int level) {
   int N = (1 << (level + 1));
-  multigrid<problem, 
-            jacobi<2, problem::t_matrix, vr>,
-	    jacobi<2, problem::t_matrix, vr> > g(level, p);
+  multigrid<problem, nu_1, smooth, nu_2, smooth> g(level, p);
   v ur(N + 1);
   v r(N + 1);
   v e;
@@ -353,11 +419,76 @@ void test_multigrid(problem & p, int level) {
   std::cout << exp << std::endl;
 }
 
+template<int nu_1, int nu_2, 
+         void smooth(const typename problem::t_matrix& M, vr& u, const vr & f)>
+void test_full_multigrid(problem & p, int level) {
+  int N = (1 << (level + 1));
+  multigrid<problem, nu_1, smooth, nu_2, smooth> g(level, p);
+  v ur(N + 1);
+  v r(N + 1);
+  v e;
+
+  experiment exp(level);
+  std::vector<experiment_iteration> & eis = exp.iterations;
+
+  ur.clear();
+  p.u(ur, level);
+
+  const double h = 1/(static_cast<double>(N));
+  int i = 0;
+  while(1) {
+    if(i == 0) {
+      g.full_solve();
+    } else {
+      g.solve();
+    }
+
+    // Calculate the residual at the finest grid.
+    r = prod(g.A[level], g.uh[level]);
+    r *= -1;
+    r += g.fh[level];
+
+    // Calculate the error on the finest grid.
+    e = ur - g.uh[level];
+    
+    // Record statistics.
+    experiment_iteration ei;
+
+    ei.i = i+1;
+
+    ei.l2r  = norm_h<v>(h,r);
+    ei.infr = norm_inf(r);
+
+    ei.l2e  = norm_h<v>(h,e);
+    ei.infe = norm_inf(e);
+
+    if(i > 0) {
+      ei.l2rf  = ei.l2r/eis[i-1].l2r;
+      ei.infrf = ei.infr/eis[i-1].infr;
+
+      ei.l2ef  = ei.l2e/eis[i-1].l2e;
+      ei.infef = ei.infe/eis[i-1].infe;
+    }
+
+    exp.iterations.push_back(ei);
+
+    if(i > 0 && ei.l2rf > 0.5)
+      break;
+
+    ++i;
+  }
+
+  std::cout << exp << std::endl;
+}
+
 int main(int argc, char * argv[]) {
-  const int maxl = 9;
+  const int maxl = 15;
   problem p(1, 0.0, 1.0);
   
   for(int i = 3; i <= maxl; ++i) {
-    test_multigrid(p, i);
+    test_multigrid<2, 2, jacobi<problem::t_matrix, vr> >(p, i);
+    test_full_multigrid<2, 2, jacobi<problem::t_matrix, vr> >(p, i);
+    test_multigrid<2, 2, gauss_seidel<problem::t_matrix, vr> >(p, i);
+    test_full_multigrid<2, 2, gauss_seidel<problem::t_matrix, vr> >(p, i);
   }
 }
