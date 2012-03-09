@@ -3,6 +3,7 @@
 #include <iostream>
 #include <iomanip>
 #include <vector>
+#include <map>
 
 #include <boost/numeric/ublas/vector.hpp>
 #include <boost/numeric/ublas/vector_proxy.hpp>
@@ -11,6 +12,8 @@
 #include <boost/numeric/ublas/triangular.hpp>
 #include <boost/numeric/ublas/io.hpp>
 #include <boost/numeric/ublas/lu.hpp>
+
+#include <sys/resource.h>
 
 namespace ublas = boost::numeric::ublas;
 
@@ -147,8 +150,6 @@ void gauss_seidel<ublas::banded_matrix<double, column_major, unbounded_array<dou
   w = prod(A,u);
   w -= f;
 
-  double r1 = norm_h<v>(1/(static_cast<double>(u.size()-1)), w);
-
   for(int i = 0; i < u.size(); ++i) {
     w[i] = 0;
     for(int j = i+1; (j < f.size()) && (j <= i + A.upper()); ++j)
@@ -159,7 +160,7 @@ void gauss_seidel<ublas::banded_matrix<double, column_major, unbounded_array<dou
 
   for(int i = 0; i < u.size(); ++i) {
     u[i] = w[i];
-    for(int j = 0; j < i; ++j) {
+    for(int j = std::max(static_cast<size_t>(0), i-A.lower()); j < i; ++j) {
       u[i] -= A(i,j)*u[j];
     }
     u[i] /= A(i,i);
@@ -329,11 +330,14 @@ class experiment_iteration {
     double l2ef;
     double infe;
     double infef;
+    int time;
 };
 
 class experiment {
   public:
     int maxl;
+    struct rusage start;
+    int time;
     std::vector<experiment_iteration> iterations;
 
     experiment(int _maxl) : maxl(_maxl) {
@@ -343,7 +347,7 @@ class experiment {
 
 std::ostream & operator << (std::ostream & out, const experiment & e) {
   out << "Multigrid solution on level " << e.maxl << "\n";
-  out << "  i          ||r||_h       ||r||_inf          ||e||_h        ||e||_inf\n";
+  out << "  i          ||r||_h       ||r||_inf          ||e||_h        ||e||_inf Accrued Time\n";
   for(std::vector<experiment_iteration>::const_iterator i = e.iterations.begin();
       i != e.iterations.end(); ++i) {
     out << " "  << std::setw(2) << i->i;
@@ -355,6 +359,7 @@ std::ostream & operator << (std::ostream & out, const experiment & e) {
         << " (" << std::right << std::fixed      << std::setw(4) << std::setprecision(2) << i->l2ef << ")";
     out << " "  << std::right << std::scientific << std::setw(7) << std::setprecision(3) << i->infe
         << " (" << std::right << std::fixed      << std::setw(4) << std::setprecision(2) << i->infef << ")";
+    out << " "  << std::right << std::fixed      << std::setw(5) << i->time;
     out << std::endl;
   }
 
@@ -363,12 +368,14 @@ std::ostream & operator << (std::ostream & out, const experiment & e) {
 
 template<int nu_1, int nu_2, 
          void smooth(const typename problem::t_matrix& M, vr& u, const vr & f)>
-void test_multigrid(problem & p, int level) {
+int test_multigrid(problem & p, int level) {
   int N = (1 << (level + 1));
   multigrid<problem, nu_1, smooth, nu_2, smooth> g(level, p);
   v ur(N + 1);
   v r(N + 1);
   v e;
+
+  struct rusage end;
 
   experiment exp(level);
   std::vector<experiment_iteration> & eis = exp.iterations;
@@ -378,8 +385,11 @@ void test_multigrid(problem & p, int level) {
 
   const double h = 1/(static_cast<double>(N));
   int i = 0;
+  getrusage(RUSAGE_SELF, &exp.start);
   while(1) {
     g.solve();
+
+    getrusage(RUSAGE_SELF, &end);
 
     // Calculate the residual at the finest grid.
     r = prod(g.A[level], g.uh[level]);
@@ -400,13 +410,22 @@ void test_multigrid(problem & p, int level) {
     ei.l2e  = norm_h<v>(h,e);
     ei.infe = norm_inf(e);
 
-    if(i > 0) {
+    if(i == 0) {
+      ei.l2rf  = 0.0;
+      ei.infrf = 0.0;
+
+      ei.l2ef  = 0.0;
+      ei.infef = 0.0;
+    } else {
       ei.l2rf  = ei.l2r/eis[i-1].l2r;
       ei.infrf = ei.infr/eis[i-1].infr;
 
       ei.l2ef  = ei.l2e/eis[i-1].l2e;
       ei.infef = ei.infe/eis[i-1].infe;
     }
+
+    ei.time = (end.ru_utime.tv_sec*1e6 + end.ru_utime.tv_usec) - (exp.start.ru_utime.tv_sec*1e6 + exp.start.ru_utime.tv_usec);
+    exp.time = ei.time;
 
     exp.iterations.push_back(ei);
 
@@ -417,16 +436,19 @@ void test_multigrid(problem & p, int level) {
   }
 
   std::cout << exp << std::endl;
+  return exp.time;
 }
 
 template<int nu_1, int nu_2, 
          void smooth(const typename problem::t_matrix& M, vr& u, const vr & f)>
-void test_full_multigrid(problem & p, int level) {
+int test_full_multigrid(problem & p, int level) {
   int N = (1 << (level + 1));
   multigrid<problem, nu_1, smooth, nu_2, smooth> g(level, p);
   v ur(N + 1);
   v r(N + 1);
   v e;
+
+  struct rusage end;
 
   experiment exp(level);
   std::vector<experiment_iteration> & eis = exp.iterations;
@@ -436,6 +458,7 @@ void test_full_multigrid(problem & p, int level) {
 
   const double h = 1/(static_cast<double>(N));
   int i = 0;
+  getrusage(RUSAGE_SELF, &exp.start);
   while(1) {
     if(i == 0) {
       g.full_solve();
@@ -443,6 +466,8 @@ void test_full_multigrid(problem & p, int level) {
       g.solve();
     }
 
+    getrusage(RUSAGE_SELF, &end);
+
     // Calculate the residual at the finest grid.
     r = prod(g.A[level], g.uh[level]);
     r *= -1;
@@ -462,13 +487,22 @@ void test_full_multigrid(problem & p, int level) {
     ei.l2e  = norm_h<v>(h,e);
     ei.infe = norm_inf(e);
 
-    if(i > 0) {
+    if(i == 0) {
+      ei.l2rf  = 0.0;
+      ei.infrf = 0.0;
+
+      ei.l2ef  = 0.0;
+      ei.infef = 0.0;
+    } else {
       ei.l2rf  = ei.l2r/eis[i-1].l2r;
       ei.infrf = ei.infr/eis[i-1].infr;
 
       ei.l2ef  = ei.l2e/eis[i-1].l2e;
       ei.infef = ei.infe/eis[i-1].infe;
     }
+
+    ei.time = (end.ru_utime.tv_sec*1e6 + end.ru_utime.tv_usec) - (exp.start.ru_utime.tv_sec*1e6 + exp.start.ru_utime.tv_usec);
+    exp.time = ei.time;
 
     exp.iterations.push_back(ei);
 
@@ -479,16 +513,28 @@ void test_full_multigrid(problem & p, int level) {
   }
 
   std::cout << exp << std::endl;
+  return exp.time;
 }
 
 int main(int argc, char * argv[]) {
-  const int maxl = 15;
+  using std::pair;
+
+  const int maxl = 13;
   problem p(1, 0.0, 1.0);
+  std::map<int, int> jacobi_time;
+  std::map<int, int> full_jacobi_time;
+  std::map<int, int> gauss_seidel_time;
+  std::map<int, int> full_gauss_seidel_time;
   
   for(int i = 3; i <= maxl; ++i) {
-    test_multigrid<2, 2, jacobi<problem::t_matrix, vr> >(p, i);
-    test_full_multigrid<2, 2, jacobi<problem::t_matrix, vr> >(p, i);
-    test_multigrid<2, 2, gauss_seidel<problem::t_matrix, vr> >(p, i);
-    test_full_multigrid<2, 2, gauss_seidel<problem::t_matrix, vr> >(p, i);
+    jacobi_time.insert(pair<int, int>(i, test_multigrid<2, 2, jacobi<problem::t_matrix, vr> >(p, i)));
+    full_jacobi_time.insert(pair<int, int>(i, test_full_multigrid<2, 2, jacobi<problem::t_matrix, vr> >(p, i)));
+    gauss_seidel_time.insert(pair<int, int>(i, test_multigrid<2, 2, gauss_seidel<problem::t_matrix, vr> >(p, i)));
+    full_gauss_seidel_time.insert(pair<int, int>(i, test_full_multigrid<2, 2, gauss_seidel<problem::t_matrix, vr> >(p, i)));
   }
+
+  /*for(int i = 4; i <= maxl; ++i) {
+    std::cout << full_jacobi_time[i]/((double) full_jacobi_time[i-1]) << std::endl;
+    std::cout << full_gauss_seidel_time[i]/((double) full_jacobi_time[i-1]) << std::endl;
+  }*/
 }
