@@ -1,0 +1,1277 @@
+\documentclass[a4paper,10pt,oneside]{book}
+\usepackage[utf8x]{inputenc}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amsthm}
+\usepackage{booktabs}
+%\usepackage{mathtools}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{amscd}
+\usepackage{url}
+\usepackage{color}
+
+\setcounter{MaxMatrixCols}{15}
+
+\theoremstyle{plain}% default
+\newtheorem{thm}{Theorem}[section]
+\newtheorem{lem}[thm]{Lemma}
+\newtheorem{prop}[thm]{Proposition}
+\newtheorem*{cor}{Corollary}
+\newtheorem*{KL}{Klein's Lemma}
+
+\theoremstyle{definition}
+\newtheorem{defn}{Definition}[section]
+\newtheorem{conj}{Conjecture}[section]
+\newtheorem{example}{Example}[section]
+
+\theoremstyle{remark}
+\newtheorem*{rem}{Remark}
+\newtheorem*{note}{Note}
+
+\DeclareMathOperator{\spt}{spt}
+\DeclareMathOperator{\spn}{span}
+\DeclareMathOperator{\diam}{diam}
+%\DeclarePairedDelimiterX{\Set}[2]{\lbrace}{\rbrace}%
+% { #1 \,\delimsize|\, #2 }
+
+\newcommand{\bbR}{\mathbb{R}}
+\newcommand{\bbZ}{\mathbb{Z}}
+\newcommand{\bbN}{\mathbb{N}}
+\newcommand{\calC}{\mathcal{C}}
+\newcommand{\calO}{\mathcal{O}}
+\newcommand{\calS}{\mathcal{S}}
+\newcommand{\calR}{\mathcal{R}}
+\newcommand{\calP}{\mathcal{P}}
+\newcommand{\calT}{\mathcal{T}}
+\newcommand{\calV}{\mathcal{V}}
+\newcommand{\calN}{\mathcal{N}}
+\newcommand{\hl}{h_l} % ``Size'' of Level l
+\newcommand{\Omegal}{\Omega_l} % Grid of Level l
+\newcommand{\nl}{n_l} % Cardinality of \Omegal
+\newcommand{\fl}{f^l}
+\newcommand{\ul}{u^l}
+\newcommand{\bul}{\bar{u}^l}
+\newcommand{\Ll}{L_l}
+\newcommand{\rmd}{\mathrm{d}}
+\newcommand{\dx}{\rmd x}
+
+\renewcommand{\algorithmicrequire}{\textbf{Input:}}
+\renewcommand{\algorithmicensure}{\textbf{Output:}}
+
+\definecolor{orange}{RGB}{243,134,48}
+
+\title{Theory and Implementation of Multigrid Methods}
+\author{Alexander Chamberlain\\Supervisor: Dr Bjorn Stinner}
+
+\begin{document}
+\nocite{*}
+\maketitle
+
+\section*{Notation}
+\begin{center}
+\begin{tabular}{rl}
+ \toprule
+ Notation & Description\\
+ \midrule
+ $\bbR$ & The set of real numbers.\\
+ $\bbZ$ & The set of integers.\\
+ $\calO$ & Big-$\calO$.\\
+ $\calC$ & A Coarse Grid Correction operator.\\
+ $\calS$ & A smoothing operator.\\
+ $\calR$ & A restriction operator.\\
+ $\calP$ & A prolongation operator.
+\end{tabular}
+\end{center}
+
+If $u\in\bbR^n$ is a vector, $u_i$ denotes the $i$-th component of $u$.
+Therefore, if a set of vectors $\{u^k\}$ needs indexing, this paper will use
+superscripts.
+
+\tableofcontents
+
+\chapter{Motivation and Revision}
+\section{Example Problem: Poisson's Equation}
+Let us consider the one-dimensional Poisson's equation with Direchlet boundary
+conditions on the unit square
+\begin{equation}
+ \left\{
+ \begin{aligned}
+  -u''(x)&=f(x)&&\text{in }\Omega=(0,1)\\
+  u(x)&=0&&\text{on }\partial\Omega=\{0,1\}
+ \end{aligned}
+ \right.\label{P}
+\end{equation}
+We shall consider the finite difference approximation of \eqref{P}; it is
+characterised by the choice of difference scheme and the grid size, which we
+shall denote $h$. To keep things as simple as possible, let $\hl=2^{-l-1}$. The
+subscript $l$ is called the \underline{level number}. The grid of level $l$
+consists of the points
+\begin{equation}
+ \Omegal =\left\{x_i=i\hl\big|i=1,\dotsc,\nl,\;\nl=2^{l+1}-1\right\}
+\end{equation}
+The largest possible grid size is $h_0=\frac{1}{2}$; the corresponding grid
+$\Omega_0$ consists of the single point $x_1=\frac{1}{2}$ on the interior of
+$\Omega$.
+
+A finite difference scheme replaces differentials in an equation by a difference
+formula. The simplest one approximating the negative second derivate uses a 3
+point stencil
+\begin{equation}
+ \hl^{-2}\left[-u(x_{i-1})+2u(x_i)-u(x_{i+1})\right]=-u''(x_i)+\mathcal{O}
+(\hl^2)
+\end{equation}
+
+Let $\ul\in\bbR^{\nl}$ and $\fl\in\bbR^{\nl}$ be the restriction of $u$ and $f$,
+respectively, to $\Omegal$ defined by
+\begin{align}
+ \ul_i&=u(x_i)&&\forall x_i\in\Omegal\\
+ \fl_i&=f(x_i)&&\forall x_i\in\Omegal
+\end{align}
+Bear in mind that $f$ is known, but $u$ is not. Thus, we denote an approximation
+to $\ul$ by $\bul$. The following system of linear equations approximates
+\eqref{P} on the grid of level $l$, $\Omegal$.
+\begin{equation}
+ \Ll\bul=\fl\label{PA}
+\end{equation}
+where $\Ll$ is the tridiagonal matrix
+\begin{equation}
+ \Ll=\hl^{-2}
+  \begin{bmatrix}
+   2&-1&&&\\
+   -1 & 2 & -1&&\\
+   & \ddots & \ddots & \ddots&\\
+   && -1 & 2 & -1 \\
+   &&& -1 & 2
+  \end{bmatrix}
+\end{equation}
+
+\begin{prop}
+ \begin{equation}
+  \ul = \bul + \calO(\hl^2)
+ \end{equation}
+\end{prop}
+\begin{proof}
+ This follows from the Taylor expansion of $u$.
+\end{proof}
+
+Note that the boundary conditions $u(0)=u(1)=0$ are incorporated into the first
+and last equations. Since $\Ll$ is tridiagonal, it is very easy ($\calO(\nl)$)
+to compute $\bul$ directly. However, it provides us with a good example to
+approach multigrid methods.
+
+\section{Linear Iterative Methods}
+Let $A\in\bbR^{n\times n}$, $b\in\bbR$. Suppose we wished to solve
+\begin{equation}
+ Ax=b\label{SLE}
+\end{equation}
+There are many methods to solve such an equation. The most famous algorithm is
+probably the Gaussian Elimination (with partial pivoting), which has a runtime
+of the order of $\frac{2}{3}n^3$. Sometimes, a matrix is too large to use such a
+direct approach. Rather, one accepts some error (larger than machine $\epsilon$)
+in return for a result faster.
+
+The basic idea of a linear iterative method is to decompose $A$ into two
+matrices $M$ and $N$,
+\begin{equation}A=M+N\label{SLE.decomp}\end{equation}
+and, given some initial guess $x^0\in\bbR^n$ for the solution, solve
+\begin{equation}
+ Mx^k=b-Nx^{k-1}
+\end{equation}
+repeatitively to generate a sequence of $x^k$ - $x^k$ is the $k$-th iteration.
+If $x^k\to x$, the exact solution, then
+\begin{equation}
+ Mx\leftarrow Mx^k=-Nx^{k-1}+b\to-Nx+b\quad\Rightarrow\quad Ax=b
+\end{equation}
+We shall denote the \underline{error} at iteration $k$ by \[e^k:=x-x^k\] and the
+\underline{residual} by \[r^k:=b-Ax^k=Ae^k.\]
+Note that the residual can be calculated for every iteration, and therefore,
+often forms part of the stopping conditions of an algorithm.
+
+\begin{lem}
+ Suppose that $e^k=Re^{k-1}=R^ke^0$ for some $R\in\bbR^{n\times n}$, then
+ \begin{equation}
+  e^k\to0\quad\forall e^0\qquad\text{if and only if}\qquad\rho(R)<1.
+ \end{equation}
+\end{lem}
+
+In our case, we have \[R=M^{-1}N.\]
+
+\section{Jacobi Iteration}
+Let $A$ be of the form $A=D+L+U$, where $D$ is the diagonal and $L$ and $U$ are
+the lower and upper parts respectively.
+
+The \underline{Jacobi Iteration} is defined by $M=D$, $N=L+U$, or equivalently,
+by the following recurrence relation
+\begin{equation}
+ x^k=D^{-1}\left(b-\left(L+U\right)x^{k-1}\right)
+\end{equation}
+\begin{thm}
+ The Jacobi Iteration is convergent if $A$ satisfies either
+ \begin{enumerate}
+  \item $|a_{ii}|>\sum_{j\neq i}a_{ij}\quad\forall i$ (strong row criterion)
+  \item $|a_{jj}|>\sum_{i\neq j}a_{ij}\quad\forall j$ (strong column criterion)
+ \end{enumerate}
+\end{thm}
+One can weaken the theorem slightly as follows,
+\begin{thm}
+ If $A$ is irreducible and satisfies the \underline{weak row sum criterion}
+ \begin{enumerate}
+  \item $|a_{ii}|\geq\sum_{j\neq i}a_{ij}\quad\forall i$
+  \item $|a_{kk}|>\sum_{j\neq k}a_{kj}\quad\text{for at least one
+}k\in\{1,\dotsc,n\}$
+ \end{enumerate}
+ then the Jacobi Iteration converges.
+\end{thm}
+\begin{rem}
+ Note that $\Ll$ is irreducible and satisfies the weak row sum criterion.
+Therefore, the Jacobi method applied to \eqref{PA} will converge. However, it
+turns out that the Jacobi method can be quite slow.
+\end{rem}
+
+\section{Damped Jacobi Iteration}
+Instead of the standard Jacobi Iteration, given $\omega\in(0,1]$, we can define
+$M$ and $N$ as follows
+\begin{align}
+ M_\omega&=\frac{1}{\omega}D\\
+ N_\omega&=A-\frac{1}{\omega}D
+\end{align}
+This is known as the \underline{Damped Jacobi Iteration}. Note that we still
+have $A=M+N$ and $\omega=1$ gives the Jacobi Iteration. This leads us to the 
+following recurrence relation
+\begin{align}
+ x^k&=\left(\frac{1}{\omega}D\right)^{-1}\left(b-\left[A-\frac{1}{\omega}D\right
+]x^{k-1}\right)\\
+        &=\left(I-\omega D^{-1}A\right)x^{k-1}+\omega D^{-1}b
+\end{align}
+\begin{thm}
+ If $A$ is irreducible and satisfies the weak row sum criterion then the Damped
+Jacobi Iteration converges.
+\end{thm}
+\begin{proof}
+ Write this proof.
+\end{proof}
+
+For the purposes of the multigrid method, we shall denote operation from
+$x^k\mapsto x^{k+1}$ by $\calS(x^k, b)=S(x^k)+T(b)$ with
+\begin{align}
+ S(x^k) &= \left(I-\omega D^{-1}A\right)x^k\\
+ T(b)   &= \omega D^{-1}b
+\end{align}
+
+
+\section{Application of the Damped Jacobi Iteration to the Approximation of
+Poisson's Equation}
+Set $A=\Ll$ and $b=\fl$.
+\begin{thm}
+ The eigenvalues $\{\lambda_k\}$ and eigenvectors $\{v^{l,k}\}$ of $\Ll$ are
+ \begin{align}
+  \lambda_k&=4\hl^{-2}\sin^2\left(\frac{k\pi\hl}{2}\right)\\
+  v^{l,k}_i&=\sqrt{2\hl}\sin(ik\pi\hl)&&\forall i\in\{1,\dotsc,\nl\}
+ \end{align}
+ for each $k\in\{1,\dotsc,\nl\}$ respectively.
+\end{thm}
+\begin{proof}
+ We shall use that
+$\sin((j-1)\theta)+\sin((j+1)\theta)=2\sin(j\theta)\cos(\theta)$ and
+$2\sin^2(\theta)=1-\cos(2\theta)$. These are well known trigonmetric identities.
+Fix $k,i\in\{1,\dotsc,\nl\}$.
+ \begin{align}
+  (\Ll v^{l,k})_i&=\sum_{j=1}^{\nl}(\Ll)_{i,j}(v^{l,k})_i\\
+    &=\frac{\sqrt{2h_l}}{h_l^2}\left\{-\sin((i-1)k\pi h_l)+2\sin(ik\pi
+h_l)-\sin((i+1)k\pi h_l)\right\}\label{eigenline2}\\
+    &=\frac{2\sqrt{2h_l}}{h_l^2}\left(1-\cos(k\pi h_l)\right)\sin(ik\pi h_l)\\
+    &=\frac{4\sqrt{2h_l}}{h_l^2}\sin^2\left(\frac{k\pi h_l}{2}\right)\sin(j i\pi
+h_l)\\
+    &=\lambda_kv^{l,k}_i
+ \end{align}
+ \eqref{eigenline2} is clearly valid for $k\in\{2,\dotsc,n_l-1\}$. It is also
+valid for $k=1$ since $\sin(0)=0$ and $k=\nl$ since $(\nl+1)k\hl\in\bbZ$ and
+$\sin(m\pi)=0\quad\forall m\in\bbZ$.
+\end{proof}
+
+\begin{cor}
+ The iteration matrix of the Damped Jacobi Iteration has the same eigenvectors
+$(v^{l,k})_{k=1}^{\nl}$ with eigenvalues
+ \begin{equation}
+  \lambda_k(\omega)=1-2\omega\sin^2\left(\frac{k\pi h_l}{2}\right)
+ \end{equation}
+
+\end{cor}
+\begin{proof}
+ The iteration matrix $R_l(\omega)$ is given by
+ \begin{equation}
+  R_l(\omega)=I-\frac{\omega}{2} h_l^2L_l
+ \end{equation}
+ since the diagonal of $\Ll$ consists of elements of the form
+$2\hl^{-2}$. The result follows from the previous theorem.
+\end{proof}
+
+The set of eigenvectors, $\{v^{l,k}\}_{k=1}^{n_l}$, form a basis of
+$\bbR^{\nl}$.
+Suppose that the error of our initial guess is of the form
+\begin{equation}
+ e^0=\sum_{k=1}^{\nl}\alpha_kv^{l,i}
+\end{equation}
+After an $j$ iterations, we have
+\begin{equation}
+ e^j=R_l^j(\omega)e^0=\sum_{k=1}^{\nl}\lambda_k^j\alpha_kv^{l,k}\leq\left(\max_k
+{\lambda_k}\right)^j\sum_{k=1}^{\nl}\alpha_kv^{l,k}=\left(\max_k{\lambda_k}
+\right)^je^0
+\end{equation}
+For this reason, we say the \underline{rate of convergence} is given by
+\begin{equation}
+ \rho(R_l(\omega)) = \max_k\{\lambda_k\} =
+\max_k\left\{1-2\omega\sin^2\left(\frac{k\pi \hl}{2}\right)\right\} =
+1-2\omega\sin^2\left(\frac{\pi \hl}{2}\right) = \lambda_1
+\end{equation}
+The choice $\omega=1$ yields the Jacobi iteration; the rate of convergence is
+\begin{equation}
+ \rho(R_l(1)) = \lambda_1(1) = 1-2\sin^2\left(\frac{\pi h_l}{2}\right) =
+1-\frac{1}{2}\pi^2h_l^2+\mathcal{O}(h_l^4)
+\end{equation}
+This is slow, but it gets worse. Any other choice of $\omega\in(0,1)$ yields a 
+slowerrate of convergence. For example, if we take $\omega=\frac{1}{2}$, we get
+the rate of convergence
+\begin{equation}
+ \rho\left(R_l\left(\frac{1}{2}\right)\right) =
+\lambda_1\left(\frac{1}{2}\right) = 1-\sin^2\left(\frac{\pi h_l}{2}\right) =
+1-\frac{1}{4}\pi^2h_l^2+\mathcal{O}(h_l^4).
+\end{equation}
+Thus, the iteration with $\omega=\frac{1}{2}$ takes twice as many iteration
+steps as with $\omega=1$ to obtain the same level of accuracy. However, this is
+not the full story. What if we restrict ourselves to a subset of the
+eigenvectors?
+
+Let $V^{l,H}$ and $V^{l,L}$ be the set of high and low frequency eigenvectors
+respectively; they are given by
+\begin{align}
+ V^{l,H}&=\left\{v^{l,k}\bigg|\frac{1}{2}\leq k\hl<1\right\}\\
+ V^{l,L}&=\left\{v^{l,k}\bigg|0<k\hl<\frac{1}{2}\right\}
+\end{align}
+
+We can study what happens to the subspaces $\spn(V^{l,H})$ and $\spn(V^{l,L})$
+under the $R_l(\omega)$ operator.
+We shall denote the rate of convergence over $\spn(V^{l,X})$ by
+$\rho|_{V^{l,X}},\; X\in\{L,H\}$. Observe that
+\begin{align}
+ \rho|_V^{l,H}\left(R_l\left(\frac{1}{2}\right)\right) &= \max_{k\text{ st
+}v^{l,k}\in V^{l,H}}\left\{\left|1-\sin^2\left(\frac{k\pi
+\hl}{2}\right)\right|\right\} \leq\frac{1}{2}\\
+ \rho|_V^{l,L}\left(R_l\left(\frac{1}{2}\right)\right) &= \max_{k\text{ st
+}v^{l,k}\in V^{l,L}}\left\{\left|1-\sin^2\left(\frac{k\pi
+\hl}{2}\right)\right|\right\} \geq\frac{1}{2}
+\end{align}
+That is, the iteration is rapidly convergent with respect to high frequencies,
+and the slow convergence of the Damped Jacobi Iteration is caused by the low
+frequencies only. Noting that low frequency components of one grid may be high
+frequency components of a coarser grid leads us to the multigrid method.
+
+In the context of multigrid methods, the iteration operator is known as a
+\underline{smoothing operator} since it rapidly damps the high frequency
+components of the error, but leaves the low frequency compnents hardly touched.
+We shall denote the smoothing operator on level $l$ by $\calS_l$.
+
+\section{Two Grid Method}
+We have just introduced the Damped Jacobi Iteration with $\omega=\frac{1}{2}$;
+iteration $j+1$ of an approximation is calculated from iteration $j$ using
+\begin{equation}
+ \bar{u}^{l,j+1}=\calS_l(\bar{u}^{l,j}, \fl)=S_l\bar{u}^{l,j}+T_l\fl\quad
+S_l=I-\frac{1}{4}h_l^2L_l\quad T_l=\frac{\omega}{2}\hl^{2}I.
+\end{equation}
+We argued that it was quite efficient at reducing high frequency components, but
+practically ignore low frequency components. We will construct a complementary
+iteration using the coarse grid with a step size $h_{l-1}$.
+
+Let $\bul$ be an approximation to $\ul$. The error, denoted by $e^l=\ul-\bul$,
+can also be regarded as the \underline{exact correction} since $\ul=\bul+e^l$.
+Therefore, if we can find a way to approximate the error, we can improve our
+approximation of $\ul$. Furthermore, recall the definition of the residual
+\begin{equation}
+ r^l=\fl-\Ll\bul=\Ll\ul-\Ll\bul=\Ll e^l
+\end{equation}
+For the sake of clarity, that is the exact correction $e^l$ is the solution of
+$\Ll e^l=r^l$; it has the same form as the original equation $\Ll\ul=\fl$.
+However, $e^l$ is smooth, and so can be approximated well on a coarse grid.
+
+To approximate the problem $\Ll e^l=r^l$ on a coarser grid, one must construct
+an equation of the form
+\begin{equation}
+ L_{l-1}e^{l-1}=r^{l-1}
+\end{equation}
+$L_{l-1}$ is already defined, but how do we choose $r^{l-1}$. $r^{l-1}$ should
+depend linearly on $r_l$. \marginpar{Why?} Hence, we are looking to define the
+\underline{restriction operator}, denoted by
+$\calR_l:\bbR^{\nl\times\nl}\to\bbR^{n_{l-1}\times n_{l-1}}$, such that
+\begin{equation}
+ r^{l-1}:=\calR_lr^l
+\end{equation}
+The simplest choice for $\calR_l$ is the trivial injection defined by
+\begin{equation}
+ r^{l-1}_i = (\calR_lr^l)_i = r^l_{2i}\quad\forall i\in\{1,\dotsc,n_{l-1}\}
+\end{equation}
+Recall that $r^l_i$ is an approximation to the error at a point $i\hl$. If $i$
+is even, $i\hl\in\Omega_{l-1}$ by construction. The trivial injection just
+projects the approximation of error from $\Omega_l$ to $\Omega_{l-1}$.
+
+This restriction is very easy to perform, but it has some significant
+disadvantages \marginpar{Expand on this. c.f. Hackbusch section 3.5}. For a
+little more thought and a very little extra work, we can get much better results
+by considering approximations of the error at points in
+$\Omega_l\setminus\Omega_{l-1}$ too. Let us consider the restion defined by
+\begin{equation}
+ r^{l-1}_i=(\calR_lr^l)_i=\frac{1}{4}[r^l_{2i-1}+2r^l_{2i}+r^l_{2i+1}]
+\end{equation}
+That is
+\begin{equation}
+ \calR=\frac{1}{4}
+   \begin{bmatrix}
+    1 & 2 & 1 &   &   &   &   &   &   &   &   &   &   \\
+      &   & 1 & 2 & 1 &   &   &   &   &   &   &   &   \\
+      &   &   &   & 1 & 2 & 1 &   &   &   &   &   &   \\
+      &   &   &   &   &   &   &\ddots&&   &   &   &   \\
+      &   &   &   &   &   &   &   & 1 & 2 & 1 &   &   \\
+      &   &   &   &   &   &   &   &   &   & 1 & 2 & 1
+   \end{bmatrix}\in\bbR^{n_{l-1}\times n_l}
+\end{equation}
+This type of restriction is called a \underline{weighted restriction}. We shall
+justify the exact weights later.
+
+Having settled on a $r^{l-1}$, one can approximate $e^{l-1}$. Recall that
+$e^{l-1}$ should be an approximation to the exact correction $e_l$. The problem
+is that $e^{l-1}$ is only defined on the coarse grid $\Omega_{l-1}$, and,
+therefore, we have to interpolate this coarse-grid function using a
+\underline{prolongation operator}, denoted by $\calP_{l-1}$. The simplest such
+operator is defined by
+\begin{equation}
+ \bar{e}^l_i = (\calP_{l-1}e^{l-1})_i =
+   \begin{cases}
+    e^{l-1}_{\frac{i}{2}}&\text{if }i\text{ is even}\\
+   
+\frac{1}{2}\left[e^{l-1}_{\frac{i-1}{2}}+e^{l-1}_{\frac{i+1}{2}}\right]&\text{
+otherwise.}
+   \end{cases}
+\end{equation}
+That is
+\begin{equation}
+ \calP_{l-1}=\frac{1}{2}
+   \begin{bmatrix}
+    1 &   &   &   &   \\
+    2 &   &   &   &   \\
+    1 & 1 &   &   &   \\
+      & 2 &   &   &   \\
+      &   &\ddots&&   \\
+      &   &   & 2 &   \\
+      &   &   & 1 & 1 \\
+      &   &   &   & 2 \\
+      &   &   &   & 1
+   \end{bmatrix}\in\bbR^{n_l\times n_{l-1}}
+\end{equation}
+Since $u^l = \bar{u}^l+e^l$ and $\bar{e}^l$ approximates $e^l$, one can improve
+$\bar{u}^l$ by
+\begin{equation}
+ \bar{u}'^l=\bar{u}^l+\bar{e}^l
+\end{equation}
+Generating $\bar{u}'^l$ from $\bar{u}^l$ is called the \underline{coarse-grid
+correction}. We can combine that the previous operations into a coarse-grid
+correction operator, denoted by $\calC$, defined by
+\begin{equation}
+ \bar{u}'^l=\calC_l\bar{u}^l=\bar{u}^l+\calP_{l-1}L_{l-1}^{-1}
+\calR_l(\fl-\Ll\bul).
+\end{equation}
+
+Further to the steps above, we can apply the smoothing step after the coarse
+grid correction to remove any high frequency error introduced by the
+coarse-grid correction. Putting all these steps together, we get the
+\underline{Two Grid Iteration}.
+
+\begin{algorithm}
+ \caption{Two Grid Iteration for solving $\Ll\ul=\fl$;
+$TGM<\nu_1,\nu_2>(l,\Ll,\fl,\bul)$}
+ \begin{algorithmic}
+  \REQUIRE $\Ll\in\bbR^{\nl\times \nl}$, $\fl\in\bbR^\nl$, $\bul$ initial guess
+           of $\ul$
+  \ENSURE $\bul$ approximation to $\ul$
+  \IF{$l=0$}
+   \STATE $\bul \gets L_0^{-1}f^0$
+  \ELSE
+   \STATE $\bul \gets \calS_l^{\nu_1}(\bul, \fl)$ \COMMENT{Pre Smoothing}
+   \STATE $r^l \gets \Ll\bul-\fl$
+   \STATE $r^{l-1} \gets \calR_lr^l$
+   \STATE $e^{l-1} \gets L_{l-1}^{-1}r^{l-1}$
+   \STATE $\bar{e}^l \gets \calP_{l-1}e^{l-1}$
+   \STATE $\bul \gets \bul + \bar{e}^l$           \COMMENT{Coarse Grid
+Correction}
+   \STATE $\bul \gets \calS_l^{\nu_2}(\bul, \fl)$ \COMMENT{Post Smoothing}
+  \ENDIF
+ \end{algorithmic}
+\end{algorithm}
+
+$TGM$ can be tuned by changing $\nu_1$ and $\nu_2$, which refer to the number
+of times the smoothing operator is applied pre and post coarse grid correction.
+
+\section{Multigrid Method}
+As we pointed out in the last section, the equation relating the error to the
+residual is of the same form as the original equation; recall we want to
+calculate
+\begin{equation}
+ L_{l-1}e^{l-1}=r^{l-1}
+\end{equation}
+However, for large $l$, this is almost as hard as the original problem. All is 
+not lost though, as $e^{l-1}$ only needs to be an approximation and so we can
+recursively use the two grid method to solve the error equation. This leads to
+the following multigrid method.
+\begin{algorithm}
+ \caption{Multigrid Iteration for solving $\Ll\ul=\fl$;
+$MGM<\nu_1,\nu_2>(l,\Ll,\fl,\bul)$}
+ \begin{algorithmic}
+  \REQUIRE $\Ll\in\bbR^{\nl\times\nl}$, $\fl\in\bbR^\nl$, $\bul$
+           initial guess of $\ul$
+  \ENSURE $\bul$ approximation to $\ul$
+  \IF{$l=0$}
+   \STATE $\bul \gets L_0^{-1}f^0$
+  \ELSE
+   \STATE $\bul \gets \calS_l^{\nu_1}(\bul, \fl)$ \COMMENT{Pre Smoothing}
+   \STATE $r^l \gets \Ll\bul-\fl$
+   \STATE $r^{l-1} \gets \calR_lr^l$
+   \STATE $\bar{e}^{l-1} \gets MGM<\nu_1,\nu_2>(l-1, L_{l-1}, r^{l-1}, 0)$
+   \STATE $\bar{e}^l \gets \calP_{l-1}\bar{e}^{l-1}$
+   \STATE $\bul \gets \bul + \bar{e}^l$           \COMMENT{Coarse Grid
+Correction}
+   \STATE $\bul \gets \calS_l^{\nu_2}(\bul, \fl)$ \COMMENT{Post Smoothing}
+  \ENDIF
+ \end{algorithmic}
+\end{algorithm}
+
+Again, this algorithm can be tuned by changing $\nu_1$ and $\nu_2$.
+Furthermore, it should be noted that $0$ is a reasonable choice for the first
+guess of $\bar{e}^{l-1}$ as the approximation should be reasonably good.
+
+\section{Implementation and Benchmarking}
+
+Let $f(x)=1$ in \eqref{P}. This is, of course, a very simple example. The
+solution to \eqref{P} is
+\begin{equation}
+ u(x)=\frac{1}{2}(x-x^2)
+\end{equation}
+
+However, can we use this simple example to see the advantage of the Multigrid
+Method over a direct method?
+
+\textbf{Initial Results}
+\begin{verbatim}
+
+           |   Multigrid  |   Direct     
+ l |   N   | Time | Error | Time | Error 
+-----------------------------------------
+1 3 0 6.7435e-06 0 1.38778e-17
+2 7 0 9.11724e-06 4000 1.96262e-17
+3 15 0 2.16225e-06 8001 2.88194e-17
+4 31 8000 5.93003e-07 36002 1.35655e-15
+5 63 20002 1.4893e-07 284017 6.22443e-15
+6 127 60003 3.76287e-08 2304144 1.00753e-14
+7 255 188012 9.43674e-09 17657104 4.09811e-14
+ 
+\end{verbatim}
+
+\chapter{Discretisation Methods}
+\label{chap:discretisation_methods}
+We live in an analog world with infintesimal precision, but our computers are
+digital. In order to analyse our world, we model it. Sometimes these models
+result in partial differential equation and some of these don't have analytic
+solutions (that we have discovered...). In order to gain some understanding of
+these models, we need to reduce the complexity by approximating them on some
+finite dimensional subspace of the model space; to do this we employ a
+discretisation method.
+
+\section{Finite Difference Method}
+The favourite of undergraduates, the Finite Difference Method is a relatively
+method based upon Taylor expansions of an unknown, but sufficiently smooth,
+function around a set of grid points.
+
+\section{Finite Element Method}
+Finite Element Methods are slightly more complicated, but can be much more
+fruitful in more complecated domains. For the purpose of this paper, we will
+focus on domains, often denoted by $\Omega$, that are sufficiently regular,
+bounded and with (piecewise) smooth boundaries. For more details, I refer the
+reader to Braess \cite{Braess01} and Kornhuber \cite{Kornhuber08}.
+
+Let $V$ be a Hilbert space. We shall consider the following problem
+\begin{equation}
+ \text{Find }u\in V\text{ such that }\quad a(u,v)=l(v)\quad\forall v\in V
+\end{equation}
+where $a(\cdot,\cdot)$ is a coercive, continuous bilinear form and $l(\cdot)$
+is a continuous linear form; that is
+\begin{align}
+ a(v,v)&\geq c_0||v||_V^2&&\forall v\in V
+ a(v,w)&\leq c_1||v||_V||w||_V&&\forall v,w\in V
+ l(v)&\leq c_2||v||_V&&\forall v\in V
+\end{align}
+
+The \underline{Ritz-Galerkin} approximation, $u_h\in V_h$, of $u$ is obtained
+by replacing $V$ by the replacing $V$ by a finite-dimensional subspace,
+$V_h\subset V$; we obtain the following problem,
+\begin{equation}
+ \text{Find }u_h\in V_h\text{ such that }\quad a(u_h,v_h)=l(v_h)\quad\forall
+v_h\in V_h\label{P_h}
+\end{equation}
+
+Let $N_h<\infty$ be the dimension of $V_h$. Let $\{\phi_j\}_{j=1}^{N_h}$ be a
+basis of $V_h$. Using ideas from Functional Analysis, we have that \eqref{P_h},
+is equivalent to solving
+\begin{equation}
+ \text{Find }u_h\in V_h\text{ such that }\quad
+a(u_h,\phi_i)=l(\phi_i)\quad\forall i=1,\dots,N_h
+\end{equation}
+Furthermore, for all $v_h\in V_h$, there exists $\{z_j\}_{j=1}^{N_h}$ such that
+\[v_h=\sum_{j=1}^{N_h}z_j\phi_j\]
+Therefore, we have reduced \eqref{P_h} to the following system of linear
+equations
+\begin{equation}
+ \sum_{j=1}^{N_h}a(\phi_j, \phi_i)z_j=l(\phi_i)\quad\forall i=1,\dots,N_h
+\end{equation}
+This can be written in matrix-vector form
+\begin{equation}
+ Az=L
+\end{equation}
+where $A\in\bbR^{N_h\times N_h};A_{ij}=a(\phi_j, \phi_i)$ and
+$L\in\bbR^{N_h};L_i=l(\phi_i)$.
+
+\chapter{Smoothing Operators}
+
+The discussion in Chapter 1 was very specific, but we will use it to motivate
+our exploration of a general multigrid method.
+
+The general idea is to carry out several smoothing steps, which will strongly
+damp the oscillating components of the error. We then consider a coarser grid
+and approximate the smooth error; this is possible since smooth error can
+be approximated reasonably well on coarse grids where the problem has the same
+form.
+
+An iterative method is the result of alternatively repeating the
+\emph{smoothing step} and the \emph{coarse-grid correction}. We will have a
+quick look at the smoothing step.
+
+\section{Gauss-Seidel Iteration}
+Let us consider the following system of linear equations; for
+$A\in\bbR^{n\times n}$, $b\in\bbR^n$ given, solve for $x\in\bbR^n$,
+\begin{equation}
+ Ax=b
+\end{equation}
+Decompose $A$ as follows
+\begin{equation}
+ A = D - L - U
+\end{equation}
+where $D$ is diagonal, $L$ lower-triangular and $U$ upper-triangular.
+
+The Gauss-Seidel method corresponds to 
+\begin{equation}
+ x^{(k+1)} = (D-L)^{-1}\left(Ux^{(k)}+b\right)
+\end{equation}
+
+\begin{prop}
+ Suppose $A$ is diagonally dominant and irreducible. Then the Gauss-Seidel
+method converges.
+
+ If $A$ is strictly diagonally dominant, then the hypothesis that $A$ be
+irreducible is not needed.
+\end{prop}
+
+For the proof, I refer the reader to Braess \cite{Braess01}.
+
+\section{Application of Smoothing Operators to Finite Element Spaces.}
+We saw in Chapter \ref{chap:discretisation_methods}, Finite Element Methods
+boil down to solving a linear system of equations
+\begin{equation}
+ Au_h=b
+\end{equation}
+Let us denote the smoothing operator, parameterised by $A$ and $b$,
+$\calS_{A,b}$. For brevity, I will often drop the subscript. Given an initial
+guess $u_h^0$, one obtains an approximation with smoother error by simply
+applying the smoothing operator.
+\begin{equation}
+ u_h^1=\calS u_h^0
+\end{equation}
+In general, we apply the smoothing operator a multiple number of times in order
+to sufficiently damp high-frequency error components. The multigrid method will
+then use a coarse-grid correction to eliminate the low-frequency error
+components.
+
+\chapter{Prolongation and Restriction Operators}
+A fundamental part of the Multigrid Method is the heirarchy of grids
+$\Omega_0\subset\dots\subset\Omega_l$. A necessary complication of considering
+this hierarchy is the prolongation of approximations from $\Omega_k$ to
+$\Omega_{k+1}$ and the restriction of approximations from $\Omega_{k+1}$ to
+$\Omega_k$.
+
+\section{Prolongation Operators in Finite Difference Methods}
+\begin{figure}
+ \centering
+ \includegraphics{drawings/uniform_grid_coarsening.pdf}
+ \caption{Uniform mesh coarsening by factor 2}
+ \label{fig:uniform_grid_coarsening}
+\end{figure}
+
+Let us first consider piecewise linear interpolation. We shall restrict
+ourselves to the 2 dimensional case, as the problems addressed here are similar
+to those that need to be addressed in higher dimensions. Suppose we are
+coarsening from $\Omega_l$ to $\Omega_{l-1}$; we are considering the
+prolongation, $p$, from $\Omega_{l-1}$ to $\Omega_l$. Figure
+\ref{fig:uniform_grid_coarsening} represents a uniform grid coarsening of
+factor 2. The dots represent the points in $\Omega_l$ and
+those boxed are also in $\Omega_{l-1}$.
+
+Given a function, $v_{l-1}$, on $\Omega_{l-1}$, we have to define
+$v_l=pv_{l-1}$. Suppose
+$\{(0,0),(0,2h),(2h,0),(2h,2h)\}\subset\Omega_{l-1}\cap\Omega_l$. These are the
+coarse-grid points and the prolongation preserves their value:
+\begin{align}
+ v_l(0,0)&=v_{l-1}(0,0);&v_l(0,2h)&=v_{l-1}(0,2h);\\
+ v_l(2h,0)&=v_{l-1}(2h,0);&v_l(2h,2h)&=v_{l-1}(2h,2h).
+\end{align}
+Equally easy to define are the points lying directly between 2 grid points,
+which have the following linear interpolates
+\begin{align}
+ v_l(0,h)&=\frac{1}{2}v_{l-1}(0,0)+\frac{1}{2}v_{l-1}(0,2h);\\
+ v_l(h,0)&=\frac{1}{2}v_{l-1}(0,0)+\frac{1}{2}v_{l-1}(2h,0);\\
+ v_l(2h,h)&=\frac{1}{2}v_{l-1}(2h,0)+\frac{1}{2}v_{l-1}(2h,2h);\\
+ v_l(h,2h)&=\frac{1}{2}v_{l-1}(0,2h)+\frac{1}{2}v_{l-1}(2h,2h).
+\end{align}
+However, there are multiple ways to specify $v_l(h,h)$. We could define it as
+the linear interpolation parallel to the x or y axis; in that case, we have
+\begin{align}
+ v_l&=\frac{1}{2}v_{l-1}(0,h)+\frac{1}{2}v_{l-1}(2h,h)\\
+    &=\frac{1}{4}v_{l-1}(0,0)+\frac{1}{4}v_{l-1}(0,2h)
+     +\frac{1}{4}v_{l-1}(2h,0)+\frac{1}{4}v_{l-1}(2h,2h)\\
+    &=\frac{1}{2}v_{l-1}(h,0)+\frac{1}{2}v_{l-1}(h,2h)
+\end{align}
+But why not define it as the linear interpolation to one of the diagonals? For
+instance,
+\begin{align}
+ v_l&=\frac{1}{2}v_{l-1}(0,0)+\frac{1}{2}v_{l-1}(2h,2h)
+\end{align}
+
+\subsection{Stencils}
+Wesseling \cite{Wesseling82} defined the first alternative as the
+\underline{nine-point prolongation}, which can be symbolised by the stencil
+\begin{equation}
+ \begin{bmatrix}
+  \frac{1}{4} & \frac{1}{2} & \frac{1}{4}\\
+  \frac{1}{2} &           1 & \frac{1}{2}\\
+  \frac{1}{4} & \frac{1}{2} & \frac{1}{4}
+ \end{bmatrix}
+\end{equation}
+The alternative diagonal interpolation is called the \underline{seven-point
+prolongation} and depicted by the stencil
+\begin{equation}
+ \begin{bmatrix}
+            0 & \frac{1}{2} & \frac{1}{2}\\
+  \frac{1}{2} &           1 & \frac{1}{2}\\
+  \frac{1}{2} & \frac{1}{2} &           0
+ \end{bmatrix}
+\end{equation}
+Although the seven point stencil is sparser, it turns out that the nine-point
+stencil is easier to calculate; we shall discuss this later.\marginpar{Has this
+been discussed later?}
+
+Alternative grid coarsenings require different prolongation operators. However,
+they tend to have fewer additional fine grid points and, therefore, the
+prolongation is easier to define. Higher dimensional spaces require very
+similar prolongation operators.
+
+\section[Higher Order Prolongation Operators]{Higher Order Prolongation
+Operators in Finite Difference Methods}
+\begin{defn}
+ We say a prolongation operator has \underline{order} $m$ if it interpolates
+polynomials of degree $m-1$ exactly.
+\end{defn}
+One can define a prolongation of order $m$ for all $m\in\bbN$, but larger
+orders require larger stencils. Hackbusch \cite{Hackbusch85} explicitly defines
+cubic interpolation and one-sided quadratic interpolation.
+
+\section{Prolongation Operators in Finite Element Methods}
+Finite Element Methods are slightly different. We define a hierarchy of finite
+dimensional function spaces $H_0\subset H_1\subset\dots\subset H_l$. We have a
+corresponding basis $\{\phi_{j,v}:v=1,\dots,n_j\}$ of $H_j$. We work with the
+corresponding coefficient vectors; that is, given $u\in H_j$, there is an
+associated coefficient vector $u_j$ belongig to a vector space $U_l$. Formally,
+there is a bijection $P_j:U_j\to H_j$ defined by
+\begin{equation}
+ P_ju_j=\sum_{i=1}^l(u_j)_i\phi_{j,i}
+\end{equation}
+
+Given $P_k$ for $k=j-1,j$, we define the \underline{canonical} prolongation,
+$p$, by
+\begin{equation}
+ u_j = \underbrace{P_j^{-1}P_{j-1}}_{=:p}u_j
+\end{equation}
+
+Hackbusch \cite{Hackbusch85} gives a very nice visualisation of this shown in
+Figure \ref{fig:canonical_prolongation}.
+
+\begin{figure}
+ \begin{equation}
+  \begin{CD}
+   U_{l-1} @>p>> U_l\\
+   @VV{P_{l-1}}V   @V{P_l}VV\\
+   H_{l-1} @>{\subset}>> H_l
+  \end{CD}
+ \end{equation}
+ \caption{Commutative diagram for canonical prolongation operator}
+\label{fig:canonical_prolongation}
+\end{figure}
+
+\section{Restriction Operators}
+A Restriction Operator takes a function on a fine grid and restricts it to a
+coarse grid. Naively, this is very easy as fine grid points are also grid
+points on the coarse grid; Hackbusch \cite{Hackbusch85} defines this as the
+trivial injection, $r_{inj}$:
+\begin{equation}
+ (r_{inj}d_l)(x)=d_l(x)\quad x\in\Omega_{l-1}\subset\Omega_l
+\end{equation}
+This has a very low computational cost as well. However, there are a number of
+dangers, including the possibility of non-zero vectors on $\Omega_l$ becoming
+zero-vectors on $\Omega_{l-1}$.
+
+A better option is the adjoint, $p*$, (wrt to some scalar product
+$<\cdot,\cdot>$) of the prolongation operator, $p$, which is used for the
+coarse-to-fine transfer.
+
+The same restriction operator can be defined for Finite Element Methods.
+
+\chapter{Generalisation of Geometric Multigrid Method}
+We shall develop the notion of a geometric V-cycle to approximate the solution
+of a variational equality over the first Sobolev space.
+\section{Sobolev Spaces}
+Sobolev spaces are cool functional vector spaces and have loads of nice
+properties; Adams and Fournier explain them well in their book by the same title
+\cite{Adams03}.
+
+We need very little of the theory.
+\begin{defn}[Sobolev Norms]
+ Let $||\cdot||_{m,p}$, $m\in\bbZ_{>0}$, $1\leq p<\infty$ be the
+\underline{Sobolev Norm} defined by
+ \begin{equation}
+  ||u||_{m,p} = \left(\sum_{0\leq|\alpha|\leq m} ||D^\alpha
+u||_p^p\right)^{\frac{1}{p}}
+ \end{equation}
+ where $||\cdot||_p$ is the $L_p$-norm and $u$ is any function for which the
+right hand side makes sense. The $alpha$ are multi-indices.
+\end{defn}
+
+\begin{defn}[Sobolev Spaces]
+ For any positive integer $m$ and $1\leq p\leq \infty$, we consider the
+following spaces, on which $||\cdot||_{m,p}$ is a norm:
+ \begin{enumerate}
+  \item $H^{m,p}(\Omega)\equiv$ the completion of $\left\{u\in
+C^m(\Omega):||u||_{m,p}<\infty\right\}$ with respect to $||\cdot||_{m,p}$.
+  \item $H^{m,p}_0(\Omega)\equiv$ the closure of $C_0^\infty(\Omega)$ in
+$H^{m,p}(\Omega)$.
+ \end{enumerate}
+\end{defn}
+
+Clearly, $H^{m,p}_0\subset H^{m,p}\subset L^p$.
+
+\section{The Problem}
+Let $\Omega$ be a bounded, polyhedral domain in the Euclidean space $\bbR^d$,
+$d=2,3$. We wish to find a $u\in H$ such that the variational equality,
+\begin{equation}
+ a(u,v)=l(v)\quad\forall v\in H
+\end{equation}
+where $a$ is the bilinear form
+\begin{equation}\label{Kornhuber2.5}
+ a(v,w):=\int_\Omega\alpha(x)\nabla v(x)\cdot\nabla w(x)\dx
+\end{equation}
+and a linear functional $l\in H$. We shall assume that the coefficient
+$\alpha\in \calC^1(\bar{\Omega})$ is positive on $\bar{\Omega}$. Using results
+from Functional Analysis, $a$ defines a scalar product on $H$ and the
+corresponding \underline{energy norm}
+\begin{equation}
+ ||v||_a = a(v,v)^{\frac{1}{2}},\quad v\in H
+\end{equation}
+is equivalent to $||\cdot||_{H^1(\Omega)}$; that is, there exists
+$0<\alpha_0\leq\alpha_1\in\bbR$ such that
+\begin{equation}
+ \alpha_0||v||_{H^1(\Omega)}\leq
+||v||_a\leq\alpha_1||v||_{H^1(\Omega)}\quad\forall v\in H
+\end{equation}
+
+\begin{example}
+ Kornhuber \cite{Kornhuber08} gives the following example. Let
+$l(v)=\left<f,v\right>_{L^2(\Omega)}$, $f\in L^2(\Omega)$. \eqref{Kornhuber2.5}
+is the weak
+formulation of the boundary value problem
+\begin{equation}
+ -\nabla\cdot(\alpha(x)\nabla u(x))=f(x)\quad\forall x\in\Omega
+\end{equation}
+with Direchlet boundary conditions $u|_{\partial\Omega}\equiv0$.
+\end{example}
+
+\section{Finite Element Discretisation}
+\begin{defn}
+ A \underline{triangulation}, $\calT$, of $\Omega\subset\bbR^d$ is a set of
+$d$-simplices such that
+ \begin{equation}
+  \cup_{t\in\calT}t=\bar{\Omega}
+ \end{equation}
+with the intersection of $t,t'\in\calT$ is either a $k$ simplex, $k<d$, or
+empty.
+\end{defn}
+Essential to the idea of the multigrid method is the notion of a heirarchy of
+grids. We shall consider the nested sequence of successive refinements
+  \begin{equation*}
+    \calT_0\subset\calT_1\subset\cdots\subset\calT_j,\quad j\in\bbN.
+  \end{equation*}
+The initial triangulation $\calT_0$ is intentially coarse. Initially, we shall
+follow Kornhuber's lead by assuming these triangulations are uniformly refined.
+Later, this may not be true; Kornhuber notes that for most practical
+applications, it is essential that locally refined grids are employed to reduce
+numerical complexity.
+
+Denote the set of vertices of $\calT_k$ by $\calN_k$ and the number of vertices
+of $\calT_k$ - the cardinality of $\calN_k$ - by $n_k$.
+
+Let $\calS_k$ be the piecewise linear finite elements on $\calT_k$;
+  \begin{equation}
+   \calS_k=\{v\in H_0^1(\Omega):v|_t\text{ is linear}\quad\forall t\in\calT_k\}.
+  \end{equation}
+This gives us a nested sequence of finite dimensional subspaces;
+  \begin{equation}
+   \calS_0\subset\calS_1\subset\cdots\subset\calS_j\subset H. \label{hierarchy}
+  \end{equation}
+The \underline{Ritz-Galerkin} approximation, $u_j\in\calS_j$, of $u$ is
+obtained by replacing $H$ by the ansatz space, $\calS_j$;
+  \begin{equation}
+   a(u_j,v)=l(v)\quad v\in\calS_j
+  \end{equation}
+
+Note that, if $\Omega$ is convex, $u\in H\cap H^2(\Omega)$ and $f\in
+L^2(\Omega)$, $||u-u_j||=\calO(h_j)$, where $h_j = \max_{t\in\calT_j}\diam(t)$.
+\marginpar{Justify this.}
+
+\section{Successive Subspace Correction}
+Let
+  \begin{equation}
+    \calS_j = \calV_0 + \calV_1 + \dots + \calV_m \label{splitting}
+  \end{equation}
+be a given splitting of $\calS_j$. Then successive correction on $\calV_k$
+leads to the following algorithm for compting a new iterate $u_j^{\nu+1}$
+\begin{algorithm}
+ \label{successive_correction}
+ \caption{Successive Correction}
+ \begin{algorithmic}
+  \REQUIRE $\omega_{-1}=u^\nu_j\in\calS_j$
+  \ENSURE $u_j^{\nu+1}$ approximation to $u$
+  \FOR {$k=0,\dots,m$}
+    \STATE Solve, for $v_k$, $a(\omega_{k-1}+v_k, v) = l(v)\quad\forall
+v\in\calV_k$
+    \STATE $\omega_k\gets\omega_{k-1}+v_k$
+  \ENDFOR
+  \STATE $u_j^{\nu+1}=\omega_m$
+ \end{algorithmic}
+\end{algorithm}
+
+We wish to choose the splitting \eqref{splitting} in such a way that
+iterative applications of Algorithm \ref{successive_correction} genearate an
+iterate scheme with mesh independent convergence rates that can be implemented
+with $\calO(n_j)$ complexity.
+
+\section{Nodal Bases}
+Each space $\calS_k$ is spanned by the \underline{nodal basis},
+\begin{equation}
+ \Delta_k = \{\lambda_p^{(k)} :
+p\in\calN_k\}\qquad\lambda_p^{(k)}(q)=\delta_pq\quad\forall p,q\in\calN_k.
+\end{equation}
+Recall $\calN_k$ is the set of $n_k$ vertices of $\calT_k$.
+
+Choosing $V_l=\spn\{\lambda_{p_l}^{(j)}\}$ produces the
+\underline{Gauss-Seidel relaxation}; this reduces the high frequency errors
+very efficiently, but scarcely affects the low frequency errors. We use the
+same strategy we used in chapter 1 to overcome this; the hierarchy of spaces
+\eqref{hierarchy}.
+
+\section{Multigrid V-cycle}
+\begin{algorithm}
+ \caption{Multigrid V-cycle}
+ \begin{algorithmic}
+  \REQUIRE $u^\nu_j\in\calS_j$
+  \ENSURE $u_j^{\nu+1}$ approximation to $u$
+  \STATE $r_j\gets l-a(u^\nu_j, \cdot)$
+  \STATE $a_j\gets a$
+  \FOR {$k=j,\dots,1$}
+    \STATE Solve, for $v_k\in\calV_k$, $b_k(v_k,v) = r_k(v)\quad\forall
+v\in\calV_k$ \COMMENT{pre-smoothing}
+    \STATE $r_k \gets r_k - a_k(v_k,\cdot)$ \COMMENT{update residual}
+    \STATE $r_{k-1} \gets r_k|_{\calS_{k-1}}$ \COMMENT{canonical restriction}
+    \STATE $a_{k-1} \gets a_k|_{\calS_{k-1}\times\calS_{k-1}}$
+    \STATE Solve, for $v_k$, $b_k(v_k,v) = r_k(v)\quad\forall
+v\in\calV_k$ \COMMENT{post-smoothing}
+  \ENDFOR
+  \STATE Solve, for $v_0\in\calV_0$, $a(v_0,v)=r_0(v)\quad\forall
+v\in\calV_0$ \COMMENT{approx. coarse grid solution}
+  \FOR {$k=1,\dots,j$}
+    \STATE $v_k\gets v_k+v_{k-1}$
+  \ENDFOR
+  \STATE $u_j^{\nu+1}\gets u^\nu_j+v_j$
+ \end{algorithmic}
+\end{algorithm}
+
+
+
+\chapter{Application to 2D Poisson Equation}
+\colorbox{orange}{Scrap this chapter}
+\begin{figure}
+ \centering
+ \includegraphics[width=2cm,height=2cm]{drawings/uniform_grid_square.pdf}
+ \caption{Uniform Triangulation of the Unit Square; $h=\frac{\sqrt{2}}{2}$.}
+\end{figure}
+
+Suppose we want to solve the Poission equation in the unit square
+\begin{align}
+ -\Delta u &= f&&\text{in }\Omega=(0,1)^2,\\
+         u &= 0&&\text{on }\partial\Omega.
+\end{align}
+
+We shall use a Finite Element method. Recall $a(u,v)=\int_{\Omega} \nabla
+u\nabla v$. Let $T_h$ be a uniform triangulation of mesh size $h$. Choose
+\begin{equation}
+ S_h:=\{v\in C(\bar{\Omega}):v\text{ is linear in every triangle and }v=0\text{
+on }\partial\Omega\}.
+\end{equation}
+
+On each triangle, $v\in S_h$ is uniquely determined by the 3 vertices, as it
+has the linear form $v(x,y) = a+bx+cy$. Therefore, the dimension of $S_h$ is
+equal to the number of vertices in the triangulation. Therefore, given an
+ordering on the vertices of $T_h$, we can choose the basis $\{\phi_i\}_{i=1}^N$
+by $\phi_i(x_j,y_j)=\delta_{ij}$.
+
+
+
+% \chapter{Algebraic Multigrid Method}
+% \colorbox{orange}{Scrap this chapter}
+% 
+% So far, we have discussed the Geometric Multigrid Method. The Geometric
+% Multigrid Method uses knowledge of the underlying problem to generate a
+% sequence of grids. However, this requires us to consider each problem
+% separately. What if we could apply the ideas of the Geometric Multigrid Method
+% to the System of Linear Equations we can reduce many such problems to?
+% 
+% Given an SLE, $Au=f$, the Algebraic Multigrid Method uses knowledge only of
+% the
+% initial operator $A$ to generate a sequence of spaces for which $u$ can be
+% approximated on.
+% 
+% \section{Notation}
+% Let $A^1=A$ and $\Omega^1=\Omega$. We shall need to develop the following
+% ideas
+% \begin{enumerate}
+%  \item Grids $\Omega^1\subset\Omega^2\subset\dots\subset\Omega^M$
+%  \item Grid Operators $A^1, A^2,\dotsc,A^M$
+%  \item Grid Transfer Operators
+%  \begin{enumerate}
+%   \item Interpolation $I_{k+1}^k, k=1,2,\dotsc,M-1$
+%   \item Restriction $I_k^{k+1}, k=1,2,\dotsc,M-1$
+%  \end{enumerate}
+%  \item Relaxation scheme $\calS_k$ for each level.
+% \end{enumerate}
+% 
+% The Interpolation operator is equivalent to the Prolongation operator of the
+% GMG. The Relaxation scheme is equivalent to the Smoothing operator of the GMG.
+% 
+% \begin{algorithm}
+%  \caption{Algebraic Multigrid Iteration for solving
+% $Au=f$; $AMG<\nu_1,\nu_2>(k,A^k,f^k,\bar{u}^k)$}
+%  \begin{algorithmic}
+%   \REQUIRE $A^k\in\bbR^{n_k\times n_k}$, $f^k\in\bbR^{n_k}$, $\bar{u}^k$
+%            initial guess of $u^k$
+%   \ENSURE $\bar{u}^k$ approximation to $u^k$
+%   \IF{$k=M$}
+%    \STATE $\bar{u}^M \gets (A^M)^{-1}f^M$
+%   \ELSE
+%    \STATE $\bar{u}^k \gets \calS_k^{\nu_1}(\bar{u}^k, f^k)$ \COMMENT{Pre
+% Smoothing}
+%    \STATE $r^k \gets A\bar{u}^k-f^k$
+%    \STATE $r^{k+1} \gets I_k^{k+1}r^l$
+%    \STATE $\bar{e}^{k+1} \gets AMG<\nu_1,\nu_2>(k+1, A^{k+1}, r^{k+1}, 0)$
+%    \STATE $\bar{e}^k \gets I_{k+1}^k\bar{e}^{k+1}$
+%    \STATE $\bar{u}^k \gets \bar{u}^k + \bar{e}^k$           \COMMENT{Coarse
+% Grid
+% Correction}
+%    \STATE $\bar{u}^k \gets \calS_k^{\nu_2}(\bar{u}^k, f^k)$ \COMMENT{Post
+% Smoothing}
+%   \ENDIF
+%  \end{algorithmic}
+% \end{algorithm}
+% 
+% The real work of the AMG is the choice of ``coarse grids''. Traditionally,
+% this
+% is done in a preprocessing step, known as the \underline{setup phase}. Henson
+% and Yang describe it as follows in \cite{Henson02}.
+% 
+% \begin{algorithm}
+%  \caption{AMG Setup Phase}
+%  \begin{algorithmic}
+%   \STATE $k \gets 1$
+%   \REPEAT
+%     \STATE Partition $\Omega^k$ into disjoint sets $C^k$ and $F^k$.
+%     \STATE $\Omega^{k+1} \gets C^k$
+%     \STATE Define $I_{k+1}^k$.
+%     \STATE $I_k^{k+1}\gets(I_{k+1}^k)^T$
+%     \STATE $A^{k+1}=I_k^{k+1}A^kI_{k+1}^k$
+%   \UNTIL{$\Omega^{k+1}$ is small enough}
+%   \STATE $M \gets k+1$
+%  \end{algorithmic}
+% 
+% \end{algorithm}
+% 
+% \section{Coarse Grid Selection}
+% \begin{defn}
+%  We say a point $u_i\in\Omega$ \underline{depends} on $u_j$ if the value of
+% $u_j$ is \emph{important} in determining the value of $u_i$ from the $i$-th
+% equation. $u_j$ is said to \underline{influence} $u_i$.
+% \end{defn}
+% 
+% The exact definition of \emph{important} is a matter of heuristic; we shall
+% denote the set of points on which a point $i$ depnds on by $S_i$. The
+% definition we use is from \cite{Henson02}
+% 
+% \begin{equation}
+%  S_i=\left\{j\neq i\bigg|-a_{ij}\geq\alpha\max_{k\neq i}(-a_{ik})\right\}
+% \end{equation}
+% with $\alpha$ typically set to $0.25$. We also define the set
+% $S_i^T=\{j|i\in S_j\}$; $S_i^T$ is the set of points $j$ that are influenced
+% by
+% $i$.
+% 
+% 
+% 
+% 
+% \section{Parallel Coarse Grid Selection}
+
+
+\chapter{Implementation and Benchmarking}
+\colorbox{orange}{Move algorithms to another section and analyse}
+\begin{algorithm}
+ \caption{Multigrid V-Cycle Method (Recursive Form) -
+$MG<\nu_1,\nu_2>(l,A^l,f^l,u^l)$}
+ \begin{algorithmic}
+  \REQUIRE Level number $l$, LHS Matrix $A^l$, RHS vector
+$f^l$, Initial guess $u^l$
+  \ENSURE $u^l$ approximation to $u$ st $A^lu=f^l$.
+  \IF{$l=0$}
+   \STATE $u^l \gets (A^0)^{-1}f^l$
+  \ELSE
+   \STATE $u^l \gets \calS_l^{\nu_1}(u^l, f^l)$ \COMMENT{Pre Smoothing}
+   \STATE $r^l \gets f^l-A^lu^l$
+   \STATE $f^{l-1} \gets I_h^{2h}r^l$
+   \STATE $e^{l-1} \gets 0$
+   \STATE $e^{l-1} \gets MG<\nu_1,\nu_2>(l-1,A^{l-1},f^{l-1},e^{l-1})$
+   \STATE $e^l \gets I_{2h}^he^{l-1}$
+   \STATE $u^l \gets u^l + e^l$           \COMMENT{Coarse Grid
+Correction}
+   \STATE $u^l \gets \calS_l^{\nu_2}(u^l , f^l)$ \COMMENT{Post Smoothing}
+  \ENDIF
+ \end{algorithmic}
+\end{algorithm}
+\begin{algorithm}
+ \caption{Multigrid V-Cycle Method (Non-Recursive Form) -
+$MG<\nu_1,\nu_2>(l_{\max},\{A^l;l=0,\dots,l_{\max}\}, f^{l_{\max}},
+u^{l_{\max}})$}
+ \begin{algorithmic}
+  \REQUIRE Level number $l$, LHS Matrix $A^l$, RHS vector
+$f^l$, Initial guess $u^l$
+  \ENSURE $u^l$ approximation to $u$ st $A^lu=f^l$.
+  \FOR{$l=l_{\max},\dots,1$}
+   \STATE $u^l \gets \calS_l^{\nu_1}(u^l, f^l)$ \COMMENT{Pre Smoothing}
+   \STATE $r^l \gets f^l-A^lu^l$
+   \STATE $u^{l-1} \gets 0$
+   \STATE $f^{l-1} \gets I_h^{2h}r^l$
+  \ENDFOR
+  \STATE $u^0\gets (A^0)^{-1}f^0$
+  \FOR{$l=1,\dots,l_{\max}$}
+   \STATE $r^l \gets I_{2h}^hu^{l-1}$
+   \STATE $u^l \gets u^l + r^l$           \COMMENT{Coarse Grid
+Correction}
+   \STATE $u^l \gets \calS_l^{\nu_2}(u^l , f^l)$ \COMMENT{Post Smoothing}
+  \ENDFOR
+ \end{algorithmic}
+\end{algorithm}
+We shall implement a Geometric Multigrid method for the following problem: Find
+$u$ such that
+\begin{equation}
+ -u''(x)+\sigma u(x) = f(x)\qquad\forall x\in(0,1);\sigma\geq0
+\end{equation}
+subject to the boundary condition $u(0)=0=u(1)$.
+
+In our example program, given fixed $k\in\bbZ$, $C\in\bbR$, we shall define $f$
+as follows,
+\begin{equation}
+ f(x) = C\sin(k\pi x).
+\end{equation}
+The exact solution is, therefore, given by
+\begin{equation}
+ u(x) = C\frac{\sin(k\pi x)}{\pi^2k^2+\sigma}
+\end{equation}
+
+We shall base the implementation on the Finite Difference method. Given a level
+index, $l$, we shall define $h_l=2^{-l}$. Let $N_l$ be the number of intervals
+that the grid divides $(0,1)$ into, then $N_l=\frac{1}{h_l}=2^l$.
+Furthermore, there are $N_l-1$ interior grid points and $N_l+1$ grid points
+including the boundary. We shall store the boundary points, so that the code
+can be generalised into non-zero boundary conditions easily.
+
+Briggs \cite{Briggs87} gives some helpful hints about what data structures to
+use. Each grid requires 2 vectors to be stored: one of which is the current
+approximations on the grid and one of which is the right hand side.
+Furthermore, we must have space to compute the residual and store the matrices.
+In order to minimise system calls \footnote{System calls are requests to the
+kernel and take a significant amount of time, in general. In this case, we want
+to reduce the number of memory allocations, which can take a long time if the
+current pages allocated aren't big enough.} and try to reduce cache misses
+\footnote{A cache miss is where you try to access memory that isn't stored in
+the cache, a small piece of memory very close to the number crunching CPU.}, we
+shall store the vectors for all grids as a contiguous array.
+
+In order to do
+that, given a level number of the finest grid, $l_{\max}$, we need to know how
+much memory to allocate. As discussed, at level $l$, there are $N_l+1=2^l+1$
+grid points to store. Therefore, we must store
+\begin{equation}
+ \sum_{l=0}^{l_{\max}}2^l+1
+  =2\frac{2^{l_{\max}}-1}{2-1}+l_{\max}+1
+  =2^{l_{\max}+2}+l_{\max}-1
+\end{equation}
+points in the contiguous array; the array for level $l$ has an offset of
+$2^{l+1}+l-2$.
+
+Let $\mathtt{raw\_uh}$ be the \underline{solution array}; the array responsible
+for storing the approximations of $u$ for all grids. It must be initialised to
+zero, which is the initial guess of the error in the event of coarsening, and
+failing a better heuristic, is a reasonable initial guess at the finest level.
+
+For the purpose of this project, I shall use C++, as it is efficient and I have
+experience with it. Furthermore, I shall use the Boost Numerics library, ublas.
+More details can be found on \cite{Boost}.
+
+The problem is implemented in one class, which supplies the $f$ function. In
+the example code, it also supplies $u$ for us to test the multigrid method. The
+problem class also provides an \texttt{init\_matrix} function to initialise the
+LHS matrix. Futhermore, it provides a \texttt{restrict} and a
+\texttt{prolongate} functions to take vectors from one grid to another.
+
+The multigrid algorithm is implemented in another class, which is parameterised
+by the problem and smoothing functions. It allows for pre and post smoothing,
+and the class can apply the smoothers any number of times.
+
+The class provides 2 functions: \texttt{solve} and \texttt{full\_solve}, which
+both run one iteration of either the Multigrid Method or the Full Multigrid
+Method. They are implemented in such a way as to avoid recursion, and thus
+increase performance.
+
+\subsection{Results}
+
+\bibliographystyle{plain}
+\bibliography{bibliography}
+
+\end{document}
