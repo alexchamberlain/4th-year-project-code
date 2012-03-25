@@ -27,9 +27,11 @@ typedef ublas::vector_range<ublas::vector<double> > vr;
 typedef ublas::permutation_matrix<std::size_t> pmatrix;
 
 #include "problem_1d.hh"
-#include "norm.hh"
+#include "norms.hh"
 #include "smoothing_operators.hh"
 #include "multigrid.hh"
+
+bool latex = false;
 
 class experiment_iteration {
   public:
@@ -58,21 +60,42 @@ class experiment {
 };
 
 std::ostream & operator << (std::ostream & out, const experiment & e) {
-  out << "Multigrid solution on level " << e.maxl << "\n";
-  out << "  i          ||r||_h       ||r||_inf          ||e||_h        ||e||_inf Accrued Time\n";
-  for(std::vector<experiment_iteration>::const_iterator i = e.iterations.begin();
-      i != e.iterations.end(); ++i) {
-    out << " "  << std::setw(2) << i->i;
-    out << " "  << std::right << std::scientific << std::setw(7) << std::setprecision(3) << i->l2r
-        << " (" << std::right << std::fixed      << std::setw(4) << std::setprecision(2) << i->l2rf << ")";
-    out << " "  << std::right << std::scientific << std::setw(7) << std::setprecision(3) << i->infr
-        << " (" << std::right << std::fixed      << std::setw(4) << std::setprecision(2) << i->infrf << ")";
-    out << " "  << std::right << std::scientific << std::setw(7) << std::setprecision(3) << i->l2e
-        << " (" << std::right << std::fixed      << std::setw(4) << std::setprecision(2) << i->l2ef << ")";
-    out << " "  << std::right << std::scientific << std::setw(7) << std::setprecision(3) << i->infe
-        << " (" << std::right << std::fixed      << std::setw(4) << std::setprecision(2) << i->infef << ")";
-    out << " "  << std::right << std::fixed      << std::setw(5) << i->time;
-    out << std::endl;
+  if(!latex) {
+    out << "Multigrid solution on level " << e.maxl << "\n";
+    out << "  i          ||r||_h       ||r||_inf          ||e||_h        ||e||_inf Accrued Time\n";
+    for(std::vector<experiment_iteration>::const_iterator i = e.iterations.begin();
+	i != e.iterations.end(); ++i) {
+      out << " "  << std::setw(2) << i->i;
+      out << " "  << std::right << std::scientific << std::setw(7) << std::setprecision(3) << i->l2r
+	  << " (" << std::right << std::fixed      << std::setw(4) << std::setprecision(2) << i->l2rf << ")";
+      out << " "  << std::right << std::scientific << std::setw(7) << std::setprecision(3) << i->infr
+	  << " (" << std::right << std::fixed      << std::setw(4) << std::setprecision(2) << i->infrf << ")";
+      out << " "  << std::right << std::scientific << std::setw(7) << std::setprecision(3) << i->l2e
+	  << " (" << std::right << std::fixed      << std::setw(4) << std::setprecision(2) << i->l2ef << ")";
+      out << " "  << std::right << std::scientific << std::setw(7) << std::setprecision(3) << i->infe
+	  << " (" << std::right << std::fixed      << std::setw(4) << std::setprecision(2) << i->infef << ")";
+      out << " "  << std::right << std::fixed      << std::setw(5) << i->time;
+      out << std::endl;
+    }
+  } else {
+    out << "\\begin{tabular}{rrrrr}\n";
+    out << "\\toprule\n";
+    out << "\\multicolumn{5}{c}{$l=" << e.maxl << "$}\\\\\n";
+    out << "\\midrule\n";
+    out << " $i$ & $||r||_h$ & ratio & $||e||_h$ & ratio\\\\\n";
+    out << "\\midrule\n";
+    for(std::vector<experiment_iteration>::const_iterator i = e.iterations.begin();
+	i != e.iterations.end(); ++i) {
+      out << " " << std::setw(2) << i->i << " &";
+      out << " " << std::right << std::scientific << std::setw(7) << std::setprecision(3) << i->l2r  << " &"
+	  << " " << std::right << std::fixed      << std::setw(4) << std::setprecision(2);
+	if(i->i > 1) { out << i->l2rf; } else { out << "---";} out << " &";
+      out << " " << std::right << std::scientific << std::setw(7) << std::setprecision(3) << i->l2e  << " &"
+	  << " " << std::right << std::fixed      << std::setw(4) << std::setprecision(2);
+	if(i->i > 1) { out << i->l2ef; } else { out << "---";}
+      out << "\\\\\n";
+    }
+    out << "\\bottomrule\n\\end{tabular}" << std::endl;
   }
 
   return out;
@@ -231,22 +254,66 @@ int test_full_multigrid(problem & p, int level) {
 int main(int argc, char * argv[]) {
   using std::pair;
 
-  const int maxl = 13;
+  const int minl = 10;
+  const int maxl = 22;
   problem p(1, 0.0, 1.0);
   std::map<int, int> jacobi_time;
   std::map<int, int> full_jacobi_time;
   std::map<int, int> gauss_seidel_time;
   std::map<int, int> full_gauss_seidel_time;
+
+  while(argc > 1) {
+    if(argv[1][0] == '-') {
+      if(argv[1][1] == 'l') {
+        latex = true;
+      }
+    }
+    --argc;
+    ++argv;
+  }
+  std::cout << "Multigrid V-Cycles with Jacobi Relaxation" << std::endl;
+  std::cout << "1 Presmoothing cycles and 1 Postsmoothing cycles" << std::endl;
   
-  for(int i = 3; i <= maxl; ++i) {
+  for(int i = minl; i <= maxl; ++i) {
+    test_multigrid<1, 1, jacobi<problem::t_matrix, vr> >(p, i);
+  }
+
+  std::cout << "Multigrid V-Cycles with Gauss-Seidel Relaxation" << std::endl;
+  std::cout << "1 Presmoothing cycles and 1 Postsmoothing cycles" << std::endl;
+  
+  for(int i = minl; i <= maxl; ++i) {
+    test_multigrid<1, 1, gauss_seidel<problem::t_matrix, vr> >(p, i);
+  }
+
+
+  std::cout << "Multigrid V-Cycles with Jacobi Relaxation" << std::endl;
+  std::cout << "2 Presmoothing cycles and 2 Postsmoothing cycles" << std::endl;
+  
+  for(int i = minl; i <= maxl; ++i) {
     jacobi_time.insert(pair<int, int>(i, test_multigrid<2, 2, jacobi<problem::t_matrix, vr> >(p, i)));
-    full_jacobi_time.insert(pair<int, int>(i, test_full_multigrid<2, 2, jacobi<problem::t_matrix, vr> >(p, i)));
+  }
+
+  std::cout << "Multigrid V-Cycles with Gauss-Seidel Relaxation" << std::endl;
+  std::cout << "2 Presmoothing cycles and 2 Postsmoothing cycles" << std::endl;
+  
+  for(int i = minl; i <= maxl; ++i) {
     gauss_seidel_time.insert(pair<int, int>(i, test_multigrid<2, 2, gauss_seidel<problem::t_matrix, vr> >(p, i)));
+  }
+
+  std::cout << "Full Multigrid with Jacobi Relaxation" << std::endl;
+  
+  for(int i = minl; i <= maxl; ++i) {
+    full_jacobi_time.insert(pair<int, int>(i, test_full_multigrid<2, 2, jacobi<problem::t_matrix, vr> >(p, i)));
+  }
+
+  std::cout << "Full Multigrid with Gauss-Seidel Relaxation" << std::endl;
+  
+  for(int i = minl; i <= maxl; ++i) {
     full_gauss_seidel_time.insert(pair<int, int>(i, test_full_multigrid<2, 2, gauss_seidel<problem::t_matrix, vr> >(p, i)));
   }
 
-  /*for(int i = 4; i <= maxl; ++i) {
+  for(int i = minl+1; i <= maxl; ++i) {
     std::cout << full_jacobi_time[i]/((double) full_jacobi_time[i-1]) << std::endl;
     std::cout << full_gauss_seidel_time[i]/((double) full_jacobi_time[i-1]) << std::endl;
-  }*/
+  }
 }

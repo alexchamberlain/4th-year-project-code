@@ -11,10 +11,10 @@ class problem {
     {/* Empty */}
 
   void init_matrix(t_matrix & m, pmatrix & pm, int l) {
-    int ih = (1 << (l+1));
+    double ih = (1 << (l+1));
     size_t N = (1 << (l+1)) + 1;
 
-    int ih2 = ih * ih;
+    double ih2 = ih * ih;
 
     m.resize(N, N, 1, 1);
     m.clear();
@@ -30,14 +30,16 @@ class problem {
   }
 
   template<class V>
-  void restrict(V& r, V& rp) {
+  void restrict(int l, V& r, V& rp) {
+    // l not used.
     for(int i = 1; i < rp.size()-1; ++i) {
       rp[i] = (r[2*i-1] + 2*r[2*i] + r[2*i+1])/4.0;
     }
   }
 
   template<class V>
-  void prolongate(V& ep, V& e) {
+  void prolongate(int l, V& ep, V& e) {
+    // l not used
     e[1] = ep[1]/2.0;
 
     for(int i = 2; i < e.size()-2; i += 2) {
