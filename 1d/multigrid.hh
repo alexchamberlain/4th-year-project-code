@@ -85,7 +85,7 @@ class multigrid {
 	}
 	
         // Restrict residual to grid below.
-	p.restrict(rh[l], fh[l-1]);
+	p.restrict(l, rh[l], fh[l-1]);
       }
 
       // Invert A on coarsest grid.
@@ -93,7 +93,7 @@ class multigrid {
 
       for(int l = 1; l <= maxl; ++l) {
         // Prolongate error to grid above.
-        p.prolongate(uh[l-1], rh[l]);
+        p.prolongate(l-1, uh[l-1], rh[l]);
         //std::cout << rh[l] << std::endl;
 
         // Coarse grid correction.
@@ -124,7 +124,7 @@ class multigrid {
 	  }
 	  
 	  // Restrict residual to grid below.
-	  p.restrict(rh[l], fh[l-1]);
+	  p.restrict(l, rh[l], fh[l-1]);
 	}
 
 	// Invert A on coarsest grid.
@@ -132,7 +132,7 @@ class multigrid {
 
 	for(int l = 1; l <= tl; ++l) {
 	  // Prolongate error to grid above.
-	  p.prolongate(uh[l-1], rh[l]);
+	  p.prolongate(l-1, uh[l-1], rh[l]);
 	  //std::cout << rh[l] << std::endl;
 
 	  // Coarse grid correction.
@@ -145,7 +145,7 @@ class multigrid {
 
         if(tl < maxl) {
 	  // Prolongate soln to grid above.
-	  p.prolongate(uh[tl], uh[tl+1]);
+	  p.prolongate(tl, uh[tl], uh[tl+1]);
 	}
       }
     }

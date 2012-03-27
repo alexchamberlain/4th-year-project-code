@@ -314,6 +314,11 @@ int main(int argc, char * argv[]) {
 
   for(int i = minl+1; i <= maxl; ++i) {
     std::cout << full_jacobi_time[i]/((double) full_jacobi_time[i-1]) << std::endl;
-    std::cout << full_gauss_seidel_time[i]/((double) full_jacobi_time[i-1]) << std::endl;
   }
+
+  for(int i = minl+1; i <= maxl; ++i) {
+    std::cout << full_gauss_seidel_time[i]/((double) full_gauss_seidel_time[i-1]) << std::endl;
+  }
+
+  return 0;
 }
